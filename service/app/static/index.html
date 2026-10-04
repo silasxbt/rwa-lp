@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rwalp — 代币化美股 LP 工具</title>
+<title>rwalp</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/favicon.svg">
+<meta name="theme-color" content="#0c121b">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -373,7 +376,7 @@ const bot = "{{BOT}}";
 $("tg").innerHTML = bot
   ? `<a href="https://t.me/${bot}" target="_blank" rel="noopener">@${bot}</a>
      <span>订阅：<code>/watch 池子地址 下沿 上沿</code></span><span>体检：<code>/check 池子地址</code></span>
-     <span class="dim">价格接近或超出区间、发行方升级、暂停、拉黑、大额增发时推送</span>`
+     <span class="dim">价格接近或超出区间、区间评级变化、发行方升级、暂停、拉黑、大额增发时推送</span>`
   : `<span class="dim">机器人尚未配置。</span>`;
 $("go").onclick = check; $("bt").onclick = backtest;
 syncTickers(); check(); gov(); block(); setInterval(block, 6000);

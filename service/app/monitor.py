@@ -1,6 +1,7 @@
 """每分钟由 Cloud Scheduler 触发：bStocks 治理状态变化 → 广播；订阅池子出/近区间 → 通知订阅者。"""
 from .chain import rpc, batch, calls, cached, k, pad, addr, words
 from .analytics import BSTOCKS_BEACON, BEACON_SLOT, STABLES
+import time
 from . import store, telegram
 
 PM = "0x9fc74be63f3589485b2423984a7a0557e0cf700a"
@@ -144,4 +145,35 @@ def tick():
                 telegram.send(w["chat_id"], f"{icon} {w['name']} ${p:,.2f} {z}\n区间 ${w['lo']:,.2f} – ${w['hi']:,.2f}\n{ZONE_TIP[z]}")
                 sent += 1
     report["zone_alerts"] = sent
+    report["rating_alerts"] = rating_alerts(ws)
     return report
+
+RATING_ICON = {"安全": "🟢", "警惕": "🟠", "危险": "🔴"}
+RATING_COOLDOWN = 1800  # 同一订阅降级/升级提醒的最短间隔（秒）；升到「危险」不受限制
+
+def rating_alerts(ws):
+    """按订阅区间计算评级（链上价 + 真实股价 + 日波动），评级变化时推送。"""
+    from .analytics import pool_info
+    from .position import rating, fair_price
+    infos, sent, now = {}, 0, time.time()
+    for w in ws:
+        try:
+            if w["pool"] not in infos:
+                i = pool_info(w["pool"]); infos[w["pool"]] = (i, fair_price(i))
+            i, fair = infos[w["pool"]]
+            r = rating(i, w["lo"], w["hi"], fair)
+        except Exception:
+            continue
+        prev = w.get("rating")
+        if prev == r["level"]: continue
+        if prev is None:
+            store.update_watch(w["id"], rating=r["level"], rating_at=now); continue
+        if r["level"] != "危险" and now - w.get("rating_at", 0) < RATING_COOLDOWN: continue
+        store.update_watch(w["id"], rating=r["level"], rating_at=now)
+        fp = f"\n真实股价折算 ${fair['fair']:,.2f}（{fair['ticker']} {fair['state']}）" if fair else ""
+        telegram.send(w["chat_id"],
+            f"{RATING_ICON[r['level']]} {w['name']} 评级 {prev} → {r['level']}\n"
+            f"链上 ${i['price']:,.2f}，区间 ${w['lo']:,.2f} – ${w['hi']:,.2f}，位置 {r['pos']*100:.0f}%，离边界 {r['edge']*100:.1f}%{fp}\n"
+            + "\n".join("· " + t for t in r["reasons"]))
+        sent += 1
+    return sent

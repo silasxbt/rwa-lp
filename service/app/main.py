@@ -1,6 +1,6 @@
 import os, hmac, pathlib
 from fastapi import FastAPI, HTTPException, Header, Query, Body
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from .chain import cached, rpc
 from . import analytics, monitor, telegram, position
 
@@ -21,6 +21,13 @@ def _pool(address):
 @app.get("/", response_class=HTMLResponse)
 def index():
     return INDEX.replace("{{BOT}}", os.environ.get("TG_BOT_USERNAME", ""))
+
+FAVICON = (pathlib.Path(__file__).parent / "static" / "favicon.svg").read_bytes()
+
+@app.get("/favicon.svg")
+@app.get("/favicon.ico")
+def favicon():
+    return Response(FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
 @app.get("/health")
 def healthz():

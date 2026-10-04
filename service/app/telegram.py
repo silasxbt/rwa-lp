@@ -15,7 +15,7 @@ HELP = """rwalp 机器人：bStocks 代币化美股 LP 风控
 /check <池子地址> [下沿 上沿]  池子体检 + 手续费估算
 /stop  停止接收所有提醒
 
-订阅后会自动收到 bStocks 治理告警（升级、暂停、黑名单、大额增发）。
+订阅后会收到：出区间/近区间提醒、区间评级变化（安全/警惕/危险）、bStocks 治理告警（升级、暂停、黑名单、大额增发）。
 网页版：https://rwalp.silasxbt.com"""
 
 def send(chat_id, text):
