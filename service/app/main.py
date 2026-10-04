@@ -1,7 +1,7 @@
 import os, hmac, pathlib
 from fastapi import FastAPI, HTTPException, Header, Query, Body
 from fastapi.responses import HTMLResponse
-from .chain import cached
+from .chain import cached, rpc
 from . import analytics, monitor, telegram
 
 app = FastAPI(title="rwalp", docs_url="/api/docs")
@@ -46,6 +46,15 @@ def backtest(address: str, ranges: str = "-3:3,-4:6,-5:7", capital: float = Quer
         return analytics.backtest(address, rs, capital, days, shift, market_hours)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+@app.get("/api/depth")
+def depth(address: str):
+    _pool(address)
+    return cached(("depth", address.lower()), 60, lambda: analytics.depth(address))
+
+@app.get("/api/head")
+def head():
+    return cached("head", 3, lambda: {"block": int(rpc("eth_blockNumber", []), 16)})
 
 @app.get("/api/bstocks")
 def bstocks():

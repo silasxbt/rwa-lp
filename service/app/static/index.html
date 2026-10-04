@@ -3,166 +3,324 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rwalp · 代币化美股 LP 工具</title>
+<title>rwalp — 代币化美股 LP 工具</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0e1116; --panel:#161b22; --line:#262d37; --text:#e6edf3; --mute:#8b949e; --ok:#3fb950; --bad:#f85149; --warn:#d29922; --acc:#58a6ff; }
+  :root {
+    --base:#0c121b; --deck:#101824; --rule:#1c2735; --rule2:#283648;
+    --text:#d3dde9; --dim:#6a7b91; --ice:#8ec9ff; --ice-soft:rgba(142,201,255,.12);
+    --in:#5fd3b5; --out:#f2a65a; --risk:#ff6b6b;
+    --sans:"Geist","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+    --mono:"Geist Mono","SF Mono",ui-monospace,monospace;
+  }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 -apple-system,"PingFang SC","Noto Sans SC",sans-serif; }
-  main { max-width:980px; margin:0 auto; padding:32px 20px 80px; }
-  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:16px; margin:0 0 12px; }
-  .sub { color:var(--mute); margin:0 0 24px; }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:20px; }
-  label { display:block; color:var(--mute); font-size:12px; margin-bottom:4px; }
-  input { width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:8px 10px; font:inherit; font-variant-numeric:tabular-nums; }
-  .row { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-bottom:12px; }
-  .wide { grid-column:1/-1; }
-  button { background:var(--acc); color:#0e1116; border:0; border-radius:6px; padding:9px 18px; font:inherit; font-weight:600; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:wait; }
-  .chips button { background:var(--line); color:var(--text); font-weight:400; padding:4px 10px; margin:0 6px 6px 0; }
-  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
-  th, td { text-align:right; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  html { background:var(--base); }
+  body { margin:0; color:var(--text); font:13px/1.55 var(--sans); -webkit-font-smoothing:antialiased;
+         background-image:linear-gradient(var(--rule) 1px,transparent 1px),linear-gradient(90deg,var(--rule) 1px,transparent 1px);
+         background-size:48px 48px; background-position:-1px -1px; background-attachment:fixed; }
+  body::before { content:""; position:fixed; inset:0; background:radial-gradient(ellipse at 70% -10%,transparent 0,var(--base) 70%); pointer-events:none; z-index:-1; }
+  .num, code, input { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  a { color:var(--ice); text-decoration:none; } a:hover { text-decoration:underline; }
+  :focus-visible { outline:1px solid var(--ice); outline-offset:2px; }
+
+  header { display:flex; align-items:center; gap:18px; padding:12px 20px; border-bottom:1px solid var(--rule); background:rgba(12,18,27,.85); backdrop-filter:blur(6px); position:sticky; top:0; z-index:5; }
+  .mark { font-weight:600; font-size:15px; letter-spacing:-.02em; }
+  .mark i { font-style:normal; color:var(--ice); }
+  .chain { color:var(--dim); display:flex; align-items:center; gap:6px; }
+  .pulse { width:6px; height:6px; border-radius:50%; background:var(--in); box-shadow:0 0 0 0 rgba(95,211,181,.6); animation:pulse 2.4s infinite; }
+  @keyframes pulse { 70% { box-shadow:0 0 0 6px rgba(95,211,181,0); } 100% { box-shadow:0 0 0 0 rgba(95,211,181,0); } }
+  header nav { margin-left:auto; display:flex; gap:16px; }
+
+  .shell { display:grid; grid-template-columns:288px 1fr; min-height:calc(100vh - 49px); }
+  aside { border-right:1px solid var(--rule); padding:16px; background:rgba(16,24,36,.6); }
+  aside .sticky { position:sticky; top:65px; }
+  main { padding:16px 20px 48px; min-width:0; }
+
+  fieldset { border:0; padding:0; margin:0 0 18px; }
+  legend { color:var(--dim); font-size:12px; padding:0; margin-bottom:8px; }
+  .tickers { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px; }
+  .tickers button { font:500 12px var(--mono); color:var(--dim); background:transparent; border:1px solid var(--rule2); border-radius:3px; padding:2px 7px; cursor:pointer; }
+  .tickers button[aria-pressed="true"], .tickers button:hover { color:var(--ice); border-color:var(--ice); }
+  label { display:block; color:var(--dim); font-size:11px; margin:0 0 3px; }
+  input[type=text], input[type=number] { width:100%; background:var(--base); border:1px solid var(--rule2); color:var(--text); border-radius:3px; padding:6px 8px; font-size:12px; }
+  input:focus { border-color:var(--ice); outline:none; }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+  .check { display:flex; align-items:center; gap:6px; color:var(--dim); font-size:12px; margin-top:8px; }
+  .run { width:100%; margin-top:10px; background:var(--ice); color:var(--base); border:0; border-radius:3px; padding:7px; font:600 13px var(--sans); cursor:pointer; }
+  .run.ghost { background:transparent; color:var(--ice); border:1px solid var(--ice); }
+  .run:disabled { opacity:.45; cursor:progress; }
+  .hint { color:var(--dim); font-size:11px; margin-top:6px; }
+
+  .head { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  .head h1 { font-size:20px; font-weight:600; letter-spacing:-.02em; margin:0; }
+  .head .price { font:500 20px var(--mono); }
+  .head .addr { color:var(--dim); font-size:12px; }
+
+  .rail { position:relative; margin:14px 0 6px; border:1px solid var(--rule); background:var(--deck); border-radius:4px; padding:10px 10px 22px; }
+  .rail svg { display:block; width:100%; height:132px; }
+  .rail .axis { position:absolute; left:10px; right:10px; bottom:4px; height:14px; font:11px var(--mono); color:var(--dim); }
+  .rail .axis span { position:absolute; transform:translateX(-50%); white-space:nowrap; }
+  .rail .axis span.l { transform:none; } .rail .axis span.r { transform:translateX(-100%); }
+  .legend { display:flex; gap:14px; color:var(--dim); font-size:11px; }
+  .legend b { display:inline-block; width:8px; height:8px; margin-right:5px; vertical-align:0; border-radius:1px; }
+
+  .stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); border:1px solid var(--rule); border-radius:4px; margin:12px 0; background:var(--deck); }
+  .stats div { padding:9px 12px; border-left:1px solid var(--rule); }
+  .stats div:first-child { border-left:0; }
+  .stats dt { color:var(--dim); font-size:11px; }
+  .stats dd { margin:2px 0 0; font:500 16px var(--mono); }
+
+  .checks { display:grid; grid-template-columns:1fr 1fr; gap:2px 20px; margin:0; padding:0; list-style:none; }
+  .checks li { display:flex; gap:8px; align-items:baseline; padding:3px 0; border-bottom:1px dashed var(--rule); }
+  .dot { width:7px; height:7px; border-radius:50%; flex:none; transform:translateY(-1px); }
+  .d-ok { background:var(--in); } .d-bad { background:var(--risk); } .d-info { background:var(--out); }
+
+  section { margin-top:26px; }
+  section > h2 { font-size:13px; font-weight:600; margin:0 0 8px; display:flex; gap:10px; align-items:baseline; }
+  section > h2 small { color:var(--dim); font-weight:400; font-size:12px; }
+  .scroll { overflow-x:auto; border:1px solid var(--rule); border-radius:4px; background:var(--deck); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { padding:6px 10px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--rule); }
+  tr:last-child td { border-bottom:0; }
+  th { color:var(--dim); font-weight:400; font-size:11px; }
   th:first-child, td:first-child { text-align:left; }
-  th { color:var(--mute); font-weight:400; font-size:12px; }
-  .scroll { overflow-x:auto; }
-  .flags div { padding:2px 0; } .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .mute { color:var(--mute); }
-  .kpi { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin:16px 0; }
-  .kpi div { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
-  .kpi b { display:block; font-size:18px; font-variant-numeric:tabular-nums; }
-  .kpi span { color:var(--mute); font-size:12px; }
-  .err { color:var(--bad); }
-  code { background:var(--bg); padding:1px 5px; border-radius:4px; }
-  footer { color:var(--mute); font-size:12px; }
+  td { font-family:var(--mono); }
+  th.grp { text-align:center; border-left:1px solid var(--rule); color:var(--text); }
+  td.sep, th.sep { border-left:1px solid var(--rule); }
+  .pos { color:var(--in); } .neg { color:var(--out); } .bad { color:var(--risk); } .dim { color:var(--dim); }
+  .note { color:var(--dim); font-size:11px; margin-top:6px; max-width:78ch; }
+  .err { color:var(--risk); }
+  .empty { color:var(--dim); padding:18px; border:1px dashed var(--rule2); border-radius:4px; }
+  .bar { display:inline-block; height:5px; background:var(--ice); border-radius:1px; vertical-align:middle; margin-left:6px; opacity:.7; }
+
+  .gov td:first-child { font-family:var(--sans); }
+  .bot { display:flex; gap:16px; align-items:center; border:1px solid var(--rule); border-radius:4px; padding:12px 14px; background:var(--deck); flex-wrap:wrap; }
+  .bot code { color:var(--ice); }
+  footer { color:var(--dim); font-size:11px; margin-top:28px; max-width:78ch; }
+
+  @media (max-width:860px) {
+    .shell { grid-template-columns:1fr; }
+    aside { border-right:0; border-bottom:1px solid var(--rule); }
+    aside .sticky { position:static; }
+    .stats { grid-template-columns:repeat(2,1fr); }
+    .stats div:nth-child(odd) { border-left:0; }
+    .stats div { border-top:1px solid var(--rule); }
+    .checks { grid-template-columns:1fr; }
+    header nav a:not(:first-child) { display:none; }
+  }
+  @media (prefers-reduced-motion:reduce) { .pulse { animation:none; } }
 </style>
 </head>
 <body>
-<main>
-  <h1>rwalp</h1>
-  <p class="sub">BSC 代币化美股（bStocks）V3 集中流动性做市工具：池子体检 · 手续费估算 · 区间与调仓回测 · Telegram 风控提醒。只读链上数据，不连接钱包。</p>
+<header>
+  <span class="mark">rwa<i>lp</i></span>
+  <span class="chain"><span class="pulse" aria-hidden="true"></span>BSC <span class="num" id="block">—</span></span>
+  <nav><a id="botlink" href="#bot">Telegram 提醒</a><a href="https://github.com/silasxbt/rwa-lp">源码</a><a href="/api/docs">API</a></nav>
+</header>
 
-  <section>
-    <h2>池子体检与手续费估算</h2>
-    <div class="chips" id="chips"></div>
-    <div class="row">
-      <div class="wide"><label>池子地址（PancakeSwap V3 / Uniswap V3，股票/USDT 或 股票/USDC）</label><input id="pool" value="0xe9b9998b2ec5430d2246c7f1f8d9f298c97d7365"></div>
-      <div><label>区间下沿（美元，留空 = 当前价 −4%）</label><input id="lo" type="number" step="any"></div>
-      <div><label>区间上沿（美元，留空 = 当前价 +6%）</label><input id="hi" type="number" step="any"></div>
-      <div><label>本金（美元）</label><input id="cap" type="number" value="1000"></div>
-    </div>
-    <button id="go">体检</button>
-    <div id="out"></div>
-  </section>
+<div class="shell">
+  <aside><div class="sticky">
+    <fieldset>
+      <legend>池子</legend>
+      <div class="tickers" id="tickers"></div>
+      <label for="pool">池子地址（PancakeSwap V3 / Uniswap V3）</label>
+      <input id="pool" type="text" spellcheck="false" autocomplete="off" value="0xe9b9998b2ec5430d2246c7f1f8d9f298c97d7365">
+    </fieldset>
+    <fieldset>
+      <legend>你的仓位</legend>
+      <div class="pair">
+        <div><label for="lo">下沿 $</label><input id="lo" type="number" step="any"></div>
+        <div><label for="hi">上沿 $</label><input id="hi" type="number" step="any"></div>
+      </div>
+      <div class="pair">
+        <div><label for="cap">本金 $</label><input id="cap" type="number" value="1000" min="1"></div>
+        <div></div>
+      </div>
+      <button class="run" id="go">体检池子</button>
+      <p class="hint">留空区间时默认取当前价 −4% / +6%。改区间会实时更新深度图上的色带。</p>
+    </fieldset>
+    <fieldset>
+      <legend>回测</legend>
+      <label for="ranges">区间组合（相对开仓价 %）</label>
+      <input id="ranges" type="text" value="-3:3,-4:6,-5:7" spellcheck="false">
+      <div class="pair">
+        <div><label for="shift">出界平移比例</label><input id="shift" type="number" value="0.5" step="0.1" min="0.1" max="2"></div>
+        <div><label for="days">滚动窗口（天）</label><input id="days" type="number" value="7" min="1" max="30"></div>
+      </div>
+      <label class="check"><input id="mh" type="checkbox" checked> 只在美股交易时段调仓</label>
+      <button class="run ghost" id="bt">运行回测</button>
+    </fieldset>
+  </div></aside>
 
-  <section>
-    <h2>区间与调仓回测</h2>
-    <p class="mute">用该池子最近约 40 天的小时 K 线。<b>静态</b>：出区间不动；<b>调仓</b>：出区间后把区间朝出界方向平移（按区间对数宽度的比例），计入 swap 手续费、价格冲击和 gas（约 $0.1/次）。</p>
-    <div class="row">
-      <div class="wide"><label>区间组合（相对开仓价的百分比，逗号分隔）</label><input id="ranges" value="-3:3,-4:6,-5:7"></div>
-      <div><label>平移比例</label><input id="shift" type="number" value="0.5" step="0.1"></div>
-      <div><label>滚动窗口（天）</label><input id="days" type="number" value="7"></div>
-      <div><label>只在美股交易时段调仓</label><input id="mh" type="checkbox" checked style="width:auto"></div>
-    </div>
-    <button id="bt">回测</button>
-    <div id="btout"></div>
-  </section>
+  <main>
+    <div id="out"><p class="empty">选一个股票池子或粘贴池子地址，然后点「体检池子」。</p></div>
 
-  <section>
-    <h2>bStocks 治理状态</h2>
-    <p class="mute">所有 bStocks 代币共用同一个 Beacon、PauseManager、Compliance，在它们之间分散分散不了发行方风险。</p>
-    <div id="gov" class="scroll mute">加载中…</div>
-  </section>
+    <section id="btsec" hidden>
+      <h2>区间与调仓回测 <small id="btmeta"></small></h2>
+      <div id="btout"></div>
+    </section>
 
-  <section>
-    <h2>Telegram 提醒</h2>
-    <div id="tg"></div>
-    <p class="mute">命令：<code>/watch 池子地址 下沿 上沿</code> 订阅出区间/近区间提醒 · <code>/check 池子地址</code> 体检 · <code>/list</code> · <code>/unwatch 编号</code> · <code>/stop</code>。订阅后自动接收治理告警（升级、暂停、黑名单、大额增发）。</p>
-  </section>
+    <section>
+      <h2>bStocks 治理状态 <small>所有 bStocks 代币共用同一套升级、暂停、合规合约</small></h2>
+      <div id="gov" class="empty">读取链上状态…</div>
+    </section>
 
-  <footer>数据：BSC 公共 RPC + GeckoTerminal。估算基于历史成交量和当前流动性，不构成投资建议。<a href="https://github.com/silasxbt/rwa-lp" style="color:var(--acc)">源码</a> · <a href="/api/docs" style="color:var(--acc)">API</a></footer>
-</main>
+    <section id="bot">
+      <h2>Telegram 提醒</h2>
+      <div class="bot" id="tg"></div>
+    </section>
+
+    <footer>只读链上数据，不连接钱包。数据来自 BSC 公共 RPC 和 GeckoTerminal；手续费估算基于历史成交量与当前流动性，未计入无常损失，不构成投资建议。</footer>
+  </main>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const usd = (v, d = 2) => "$" + Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
 const pct = (v, d = 1) => (v * 100).toFixed(d) + "%";
-const sgn = (v, d = 2) => (v >= 0 ? "+" : "−") + usd(Math.abs(v), d);
-const cls = v => v >= 0 ? "ok" : "bad";
+const signed = (v, f) => (v >= 0 ? "+" : "−") + f(Math.abs(v));
+const tone = v => v >= 0 ? "pos" : "neg";
+const short = a => a.slice(0, 6) + "…" + a.slice(-4);
 const POOLS = {QQQB:"0xfc4e77248b76fefc27c4cac7151a2ee5b5cc590e", AAPLB:"0xe9b9998b2ec5430d2246c7f1f8d9f298c97d7365",
   GOOGLB:"0x89001d846f7ca36ee089f73eefc25657e1798144", NVDAB:"0x8fb4243b553ac29ba088acf00b9b7da24bd6690c",
   BABAB:"0xfd95cb1391999006eb91797a7c62acfe88b20292", PDDB:"0xd0c2a4dc7c581db2660286660b703cf6883f29ba",
   MSTRB:"0x692081209619735f25700557078ab084d3e5d007"};
-$("chips").innerHTML = Object.entries(POOLS).map(([s, a]) => `<button data-a="${a}">${s}</button>`).join("");
-$("chips").onclick = e => { if (e.target.dataset.a) { $("pool").value = e.target.dataset.a; $("lo").value = $("hi").value = ""; check(); } };
+let depthData = null, poolData = null;
+
+function syncTickers() {
+  const a = $("pool").value.trim().toLowerCase();
+  document.querySelectorAll("#tickers button").forEach(b => b.setAttribute("aria-pressed", b.dataset.a === a));
+}
+$("tickers").innerHTML = Object.entries(POOLS).map(([s, a]) => `<button type="button" data-a="${a}">${s}</button>`).join("");
+$("tickers").onclick = e => {
+  const a = e.target.dataset.a; if (!a) return;
+  $("pool").value = a; $("lo").value = $("hi").value = ""; syncTickers(); check();
+};
+$("pool").oninput = syncTickers;
 
 async function api(path) {
-  const r = await fetch(path); const j = await r.json();
-  if (!r.ok) throw new Error(j.detail || r.statusText); return j;
-}
-async function run(btn, box, fn) {
-  btn.disabled = true; box.innerHTML = '<p class="mute">查询中…（GeckoTerminal 限流时可能要等几十秒）</p>';
-  try { box.innerHTML = await fn(); } catch (e) { box.innerHTML = `<p class="err">${e.message}</p>`; }
-  btn.disabled = false;
+  const r = await fetch(path); const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || `请求失败（${r.status}）`); return j;
 }
 
-function check() {
-  run($("go"), $("out"), async () => {
-    const q = new URLSearchParams({address: $("pool").value.trim(), capital: $("cap").value});
+function railSVG() {
+  if (!depthData) return "";
+  const {bins, price} = depthData, W = 1000, H = 132;
+  const lo0 = bins[0].p0, hi0 = bins[bins.length - 1].p1, lg = Math.log;
+  const x = p => (lg(p) - lg(lo0)) / (lg(hi0) - lg(lo0)) * W;
+  const max = Math.sqrt(Math.max(...bins.map(b => b.L)) || 1);
+  const lo = +$("lo").value, hi = +$("hi").value, has = lo > 0 && hi > lo;
+  const bars = bins.map(b => {
+    const h = Math.sqrt(b.L) / max * (H - 8), x0 = x(b.p0), w = Math.max(x(b.p1) - x0 - 1.5, 1);
+    const inside = has && b.p1 > lo && b.p0 < hi;
+    return `<rect x="${x0.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${inside ? "var(--ice)" : "var(--rule2)"}" opacity="${inside ? .85 : 1}"/>`;
+  }).join("");
+  const clamp = v => Math.min(W, Math.max(0, v));
+  const band = has ? `<rect x="${clamp(x(lo))}" y="0" width="${clamp(x(hi)) - clamp(x(lo))}" height="${H}" fill="var(--ice-soft)"/>
+    <line x1="${clamp(x(lo))}" x2="${clamp(x(lo))}" y1="0" y2="${H}" stroke="var(--ice)" stroke-dasharray="3 3"/>
+    <line x1="${clamp(x(hi))}" x2="${clamp(x(hi))}" y1="0" y2="${H}" stroke="var(--ice)" stroke-dasharray="3 3"/>` : "";
+  const inRange = has && price >= lo && price <= hi;
+  const pc = inRange ? "var(--in)" : "var(--out)";
+  const lab = (v, t, c = "") => `<span class="${c}" style="left:${(clamp(x(v)) / W * 100).toFixed(2)}%">${t}</span>`;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="当前价附近的流动性分布与你的区间">
+      ${band}${bars}<line x1="${x(price)}" x2="${x(price)}" y1="0" y2="${H}" stroke="${pc}" stroke-width="2"/></svg>
+    <div class="axis">${lab(lo0, usd(lo0, 0), "l")}${has ? lab(lo, usd(lo)) + lab(hi, usd(hi)) : ""}${lab(hi0, usd(hi0, 0), "r")}</div>`;
+}
+function drawRail() { const r = document.querySelector(".rail"); if (r) r.innerHTML = railSVG(); }
+["lo", "hi"].forEach(id => $(id).addEventListener("input", drawRail));
+
+async function check() {
+  const btn = $("go"); btn.disabled = true; btn.textContent = "读取链上数据…";
+  const address = $("pool").value.trim();
+  try {
+    const q = new URLSearchParams({address, capital: $("cap").value || 1000});
     if ($("lo").value) q.set("lo", $("lo").value); if ($("hi").value) q.set("hi", $("hi").value);
-    const {pool: p, estimate: e} = await api("/api/pool?" + q);
-    if (!$("lo").value) $("lo").value = e.lo.toFixed(2); if (!$("hi").value) $("hi").value = e.hi.toFixed(2);
-    const flags = p.flags.map(f => `<div class="${f.ok === true ? "ok" : f.ok === false ? "bad" : "warn"}">${f.ok === true ? "✓" : f.ok === false ? "✗" : "!"} ${f.text}</div>`).join("");
-    return `<h2 style="margin-top:20px">${p.name} · ${usd(p.price)}</h2>
-      <div class="flags">${flags}</div>
-      <div class="kpi">
-        <div><span>你的份额</span><b>${pct(e.share, 3)}</b></div>
-        <div><span>手续费/天（7日均量）</span><b>${usd(e.fee_day7)}</b></div>
-        <div><span>手续费/天（30日均量）</span><b>${usd(e.fee_day30)}</b></div>
-        <div><span>手续费年化 7日 / 30日</span><b>${pct(e.apr7, 0)} / ${pct(e.apr30, 0)}</b></div>
-      </div>
-      <p class="mute">${e.in_range ? "" : "⚠ 当前价不在区间内，不赚手续费。"}估算 = 成交量 × LP 实得费率 × 你在当前价位的流动性占比；未扣无常损失，别人加减流动性会改变份额。TVL ${usd(p.tvl, 0)} · 日均成交 7日 ${usd(p.vol7, 0)} / 30日 ${usd(p.vol30, 0)}</p>`;
-  });
+    const [pd, dd] = await Promise.all([api("/api/pool?" + q), api("/api/depth?address=" + address).catch(() => null)]);
+    poolData = pd; depthData = dd;
+    const {pool: p, estimate: e} = pd;
+    if (!$("lo").value) $("lo").value = e.lo.toFixed(2);
+    if (!$("hi").value) $("hi").value = e.hi.toFixed(2);
+    const state = e.in_range ? `<span class="pos">在区间内</span>` : `<span class="neg">当前价不在区间内，不赚手续费</span>`;
+    const items = p.flags.map(f => `<li><span class="dot ${f.ok === true ? "d-ok" : f.ok === false ? "d-bad" : "d-info"}"></span>${f.text}</li>`).join("");
+    $("out").innerHTML = `
+      <div class="head"><h1>${p.name}</h1><span class="price">${usd(p.price)}</span>
+        <a class="addr num" href="https://bscscan.com/address/${p.pool}" target="_blank" rel="noopener">${short(p.pool)}</a>${state}</div>
+      <div class="rail">${railSVG() || '<p class="dim">深度数据暂不可用</p>'}</div>
+      <div class="legend"><span><b style="background:var(--rule2)"></b>其他 LP 的活跃流动性</span><span><b style="background:var(--ice)"></b>落在你区间内的部分</span><span><b style="background:var(--in)"></b>当前价</span></div>
+      <dl class="stats">
+        <div><dt>你的份额</dt><dd>${pct(e.share, 3)}</dd></div>
+        <div><dt>手续费/天 · 7 日量</dt><dd>${usd(e.fee_day7)}</dd></div>
+        <div><dt>手续费/天 · 30 日量</dt><dd>${usd(e.fee_day30)}</dd></div>
+        <div><dt>手续费年化</dt><dd>${pct(e.apr7, 0)} <span class="dim">/ ${pct(e.apr30, 0)}</span></dd></div>
+        <div><dt>池子 TVL</dt><dd>${usd(p.tvl, 0)}</dd></div>
+      </dl>
+      <ul class="checks">${items}</ul>
+      <p class="note">日均成交 7 日 ${usd(p.vol7, 0)}，30 日 ${usd(p.vol30, 0)}。手续费按你在当前价位的流动性占比估算；别人增减流动性会改变份额。</p>`;
+  } catch (err) {
+    $("out").innerHTML = `<p class="err">${err.message}</p>`;
+  }
+  btn.disabled = false; btn.textContent = "体检池子";
 }
 
-function backtest() {
-  run($("bt"), $("btout"), async () => {
-    const q = new URLSearchParams({address: $("pool").value.trim(), ranges: $("ranges").value, capital: $("cap").value,
+async function backtest() {
+  const btn = $("bt"); btn.disabled = true; btn.textContent = "回测中，约需 10–40 秒…";
+  $("btsec").hidden = false; $("btout").innerHTML = "";
+  try {
+    const q = new URLSearchParams({address: $("pool").value.trim(), ranges: $("ranges").value, capital: $("cap").value || 1000,
       days: $("days").value, shift: $("shift").value, market_hours: $("mh").checked});
     const b = await api("/api/backtest?" + q);
-    const d0 = new Date(b.start * 1000).toISOString().slice(0, 10), d1 = new Date(b.end * 1000).toISOString().slice(0, 10);
+    const d = t => new Date(t * 1000).toISOString().slice(0, 10);
+    $("btmeta").textContent = `${b.name}，${d(b.start)} 至 ${d(b.end)}，本金 ${usd(b.capital, 0)}，LP 实得费率 ${pct(b.lp_fee, 3)}`;
+    const maxFee = Math.max(...b.results.map(r => r.rebalance.fee_apr), 1e-9);
     const rows = b.results.map(r => {
-      const s = r.static, x = r.rebalance, w = r.rolling;
+      const w = r.rolling, s = r.static, x = r.rebalance;
       return `<tr><td>${r.lo}% / +${r.hi}%</td>
-        <td class="${cls(w.net)}">${sgn(w.net)}</td><td>${pct(w.in_range, 0)}</td>
-        <td>${pct(s.in_range, 0)}</td><td>${pct(s.fee_apr)}</td><td class="${cls(s.vs_hodl_apr)}">${pct(s.vs_hodl_apr)}</td>
-        <td>${x.rebalances}</td><td>${usd(x.cost_per_rebalance)}</td><td>${pct(x.in_range, 0)}</td><td>${pct(x.fee_apr)}</td>
-        <td class="bad">−${pct(x.cost_apr)}</td><td class="${cls(x.vs_hodl_apr)}">${pct(x.vs_hodl_apr)}</td></tr>`;
+        <td class="sep ${tone(w.net)}">${signed(w.net, usd)}</td><td>${pct(w.in_range, 0)}</td><td class="${tone(w.worst)}">${signed(w.worst, usd)}</td>
+        <td class="sep">${pct(s.in_range, 0)}</td><td>${pct(s.fee_apr)}</td><td class="${tone(s.vs_hodl_apr)}">${signed(s.vs_hodl_apr, v => pct(v))}</td>
+        <td class="sep">${x.rebalances}</td><td>${usd(x.cost_per_rebalance)}</td><td>${pct(x.in_range, 0)}</td>
+        <td>${pct(x.fee_apr)}<span class="bar" style="width:${(x.fee_apr / maxFee * 36).toFixed(0)}px"></span></td>
+        <td class="bad">−${pct(x.cost_apr)}</td><td class="${tone(x.vs_hodl_apr)}">${signed(x.vs_hodl_apr, v => pct(v))}</td></tr>`;
     }).join("");
-    return `<p class="mute">${b.name} · ${d0} → ${d1}（${b.hours} 小时）· 本金 ${usd(b.capital, 0)} · LP 实得费率 ${pct(b.lp_fee, 3)}</p>
-      <div class="scroll"><table>
-      <tr><th></th><th colspan="2">滚动 ${b.days} 天（不调仓）</th><th colspan="3">整段 · 静态</th><th colspan="6">整段 · 出区间平移 ${pct(b.shift, 0)}</th></tr>
-      <tr><th>区间</th><th>平均净收益</th><th>在区间</th><th>在区间</th><th>手续费年化</th><th>相对持币</th>
-          <th>调仓次数</th><th>单次成本</th><th>在区间</th><th>手续费年化</th><th>调仓成本</th><th>相对持币</th></tr>${rows}</table></div>
-      <p class="mute">“相对持币”= LP 最终价值 + 手续费 − 开仓时同等持仓不动的价值，已含无常损失和调仓成本，年化。单次成本 = 交易池费率 × swap 额 + 价格冲击 + gas。样本只有约 40 天、不含财报日，结论偏乐观。</p>`;
-  });
+    $("btout").innerHTML = `<div class="scroll"><table>
+      <tr><th></th><th class="grp" colspan="3">滚动 ${b.days} 天，不调仓</th><th class="grp" colspan="3">整段，不调仓</th><th class="grp" colspan="6">整段，出界后平移 ${pct(b.shift, 0)}</th></tr>
+      <tr><th>区间</th><th class="sep">平均净收益</th><th>在区间</th><th>最差窗口</th><th class="sep">在区间</th><th>手续费年化</th><th>相对持币</th>
+          <th class="sep">调仓次数</th><th>单次成本</th><th>在区间</th><th>手续费年化</th><th>调仓成本</th><th>相对持币</th></tr>${rows}</table></div>
+      <p class="note">相对持币 = LP 最终价值 + 手续费 − 开仓时同等持仓不动的价值，已含无常损失和调仓成本，按年化计。单次成本 = 交易池费率 × 换仓金额 + 价格冲击 + gas。样本约 40 天且不含财报日，结果偏乐观。</p>`;
+  } catch (err) {
+    $("btout").innerHTML = `<p class="err">${err.message}</p>`;
+  }
+  btn.disabled = false; btn.textContent = "运行回测";
 }
 
 async function gov() {
   try {
     const {tokens, state} = await api("/api/bstocks");
-    const syms = Object.keys(tokens);
-    const flag = (s, k) => state[`${s} ${k}`];
+    const cell = (bad, yes, no) => `<td class="${bad ? "bad" : "pos"}">${bad ? yes : no}</td>`;
     const blocked = s => Object.keys(state).some(k => k.startsWith(`${s} 黑名单`) && state[k]);
-    $("gov").innerHTML = `<table><tr><th>代币</th><th>暂停</th><th>增发开关</th><th>Admin</th><th>Issuer</th><th>主池被拉黑</th><th>Beacon</th></tr>` +
-      syms.map(s => `<tr><td>${s} <span class="mute">${tokens[s].slice(0, 8)}…</span></td>
-        <td class="${flag(s, "暂停") ? "bad" : "ok"}">${flag(s, "暂停") ? "已暂停" : "正常"}</td>
-        <td class="warn">${flag(s, "增发开关") ? "开启" : "关闭"}</td><td>${flag(s, "Admin数")}</td><td>${flag(s, "Issuer数")}</td>
-        <td class="${blocked(s) ? "bad" : "ok"}">${blocked(s) ? "是" : "否"}</td><td class="mute">${(state[`${s} Beacon`] || "").slice(0, 10)}…</td></tr>`).join("") +
-      `</table><p>逻辑合约 <code>${state["Beacon逻辑合约"]}</code></p>`;
-  } catch (e) { $("gov").innerHTML = `<p class="err">${e.message}</p>`; }
+    $("gov").className = "scroll";
+    $("gov").innerHTML = `<table class="gov"><tr><th>代币</th><th>合约</th><th>转账</th><th>增发</th><th>Admin</th><th>Issuer</th><th>主池黑名单</th><th>升级入口</th></tr>` +
+      Object.entries(tokens).map(([s, a]) => `<tr><td>${s}</td><td><a href="https://bscscan.com/token/${a}" target="_blank" rel="noopener">${short(a)}</a></td>
+        ${cell(state[`${s} 暂停`], "已暂停", "正常")}<td class="neg">${state[`${s} 增发开关`] ? "开启" : "关闭"}</td>
+        <td>${state[`${s} Admin数`]}</td><td>${state[`${s} Issuer数`]}</td>${cell(blocked(s), "已拉黑", "无")}
+        <td class="dim">${short(state[`${s} Beacon`] || "0x0000000000")}</td></tr>`).join("") +
+      `</table>`;
+  } catch (err) { $("gov").innerHTML = `<span class="err">${err.message}</span>`; }
+}
+
+async function block() {
+  try { $("block").textContent = "#" + (await api("/api/head")).block.toLocaleString("en-US"); } catch {}
 }
 
 const bot = "{{BOT}}";
-$("tg").innerHTML = bot ? `<p>机器人：<a style="color:var(--acc)" href="https://t.me/${bot}">@${bot}</a>，发送 <code>/start</code> 开始。</p>` : `<p class="warn">机器人即将上线。</p>`;
+$("tg").innerHTML = bot
+  ? `<a href="https://t.me/${bot}" target="_blank" rel="noopener">@${bot}</a>
+     <span>订阅：<code>/watch 池子地址 下沿 上沿</code></span><span>体检：<code>/check 池子地址</code></span>
+     <span class="dim">价格接近或超出区间、发行方升级、暂停、拉黑、大额增发时推送</span>`
+  : `<span class="dim">机器人尚未配置。</span>`;
 $("go").onclick = check; $("bt").onclick = backtest;
-check(); gov();
+syncTickers(); check(); gov(); block(); setInterval(block, 6000);
 </script>
 </body>
 </html>

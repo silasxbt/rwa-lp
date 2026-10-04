@@ -152,3 +152,38 @@ def backtest(pool, ranges, capital=1000, days=7, shift=0.5, market_hours=True):
                         rebalance=simulate(o, i["Lh"], i["fee"] / 1e6, i["lp_fee"], lo, hi, capital, True, shift, market_hours)))
     return dict(pool=i["pool"], name=i["name"], hours=len(o), start=o[0][0], end=o[-1][0], lp_fee=i["lp_fee"],
                 fee_tier=i["fee"] / 1e6, capital=capital, days=days, shift=shift, market_hours=market_hours, results=out)
+
+def depth(pool, span=0.12, buckets=60):
+    """当前价 ±span 内的活跃流动性分布（人类单位），用于画深度图。"""
+    from .chain import batch, sel
+    i = pool_info(pool)
+    pool = i["pool"]
+    ts = int(call(pool, "tickSpacing()"), 16)
+    t = words(call(pool, "slot0()"))[1]
+    t = t - 2**256 if t >= 2**255 else t
+    t = t - 2**24 if t >= 2**23 else t
+    base = (t // ts) * ts
+    n = int(math.log(1 + span) / math.log(1.0001)) // ts + 1
+    ids = [base + j * ts for j in range(-n, n + 1)]
+    res = batch([("eth_call", [{"to": pool, "data": sel("ticks(int24)") + format(x & (2**256 - 1), "064x")}, "latest"]) for x in ids])
+    net = {}
+    for x, r in zip(ids, res):
+        v = int(r[66:130], 16) if r else 0
+        net[x] = v - 2**256 if v >= 2**255 else v
+    act, cur = {base: i["L"]}, i["L"]
+    for x in ids:
+        if x > base: cur += net[x]; act[x] = cur
+    cur = i["L"]
+    for x in reversed(ids):
+        if x <= base: act[x] = cur; cur -= net[x]
+    scale = 10 ** ((i["d0"] + i["d1"]) / 2)
+    dd = 10 ** (i["d0"] - i["d1"])
+    lo, hi = i["price"] / (1 + span), i["price"] * (1 + span)
+    edges = [lo * (hi / lo) ** (j / buckets) for j in range(buckets + 1)]
+    out = []
+    for j in range(buckets):
+        mid = math.sqrt(edges[j] * edges[j + 1])
+        raw = mid / dd if i["stable_is_1"] else 1 / (mid * dd)
+        x = math.floor(math.log(raw) / math.log(1.0001) / ts) * ts
+        out.append({"p0": edges[j], "p1": edges[j + 1], "L": act.get(x, 0) / scale})
+    return {"price": i["price"], "Lh": i["Lh"], "lo": lo, "hi": hi, "bins": out, "tick_spacing": ts}
