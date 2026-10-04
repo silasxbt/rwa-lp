@@ -42,7 +42,8 @@ uv run tools/range_backtest.py 0xe9b9998b2ec5430d2246c7f1f8d9f298c97d7365 --rang
 FastAPI 服务，部署在 GCP Cloud Run（asia-east1），网址 https://rwalp.silasxbt.com 。
 
 - 网页：池子体检、手续费估算、区间回测（含出区间平移调仓的 swap 费 / 价格冲击 / gas 成本）、bStocks 治理状态
-- API：`/api/pool`、`/api/backtest`、`/api/bstocks`，文档见 `/api/docs`
+- 区间评估：近 24h 年化、三种调仓情形的成本与回本时间、对照真实股价（Yahoo Finance）的区间位置评级
+- API：`/api/pool`、`/api/position`、`/api/backtest`、`/api/depth`、`/api/bstocks`，文档见 `/api/docs`
 - Telegram 机器人：`/watch` 订阅区间提醒，订阅者自动接收治理告警
 - Cloud Scheduler 每分钟调用 `/cron/tick`（`X-Cron-Key` 校验），状态存 Firestore
 - 密钥在 Secret Manager：`rwalp-cron-key`、`rwalp-tg-webhook-secret`、`rwalp-tg-token`

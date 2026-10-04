@@ -2,7 +2,7 @@ import os, hmac, pathlib
 from fastapi import FastAPI, HTTPException, Header, Query, Body
 from fastapi.responses import HTMLResponse
 from .chain import cached, rpc
-from . import analytics, monitor, telegram
+from . import analytics, monitor, telegram, position
 
 app = FastAPI(title="rwalp", docs_url="/api/docs")
 CRON_KEY = os.environ.get("CRON_KEY", "")
@@ -46,6 +46,14 @@ def backtest(address: str, ranges: str = "-3:3,-4:6,-5:7", capital: float = Quer
         return analytics.backtest(address, rs, capital, days, shift, market_hours)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+@app.get("/api/position")
+def pos(address: str, lo: float = Query(..., gt=0), hi: float = Query(..., gt=0), capital: float = Query(1000, gt=0, le=1e8),
+        shift: float = Query(0.5, gt=0, le=2)):
+    _pool(address)
+    lo, hi = min(lo, hi), max(lo, hi)
+    if hi / lo < 1.002: raise HTTPException(400, "区间太窄")
+    return position.evaluate(address, lo, hi, capital, shift)
 
 @app.get("/api/depth")
 def depth(address: str):

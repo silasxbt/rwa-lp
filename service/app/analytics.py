@@ -46,11 +46,15 @@ def pool_info(pool):
     vols = [x[5] for x in o]
     v7 = st.mean(vols[-7:]) if vols else 0
     v30 = st.mean(vols[-30:]) if vols else 0
+    closes = [x[4] for x in o]
+    rets = [math.log(closes[j] / closes[j - 1]) for j in range(1, len(closes)) if closes[j - 1] > 0]
+    sigma_day = st.pstdev(rets) if len(rets) > 5 else 0.02
+    v24 = float(a["volume_usd"]["h24"] or 0)
     tvl = float(a["reserve_in_usd"] or 0)
     created = a["pool_created_at"][:10]
     age = (dt.date.today() - dt.date.fromisoformat(created)).days
     info = dict(s, name=a["name"], price=price, L=Lraw, Lh=Lraw / 10 ** ((s["d0"] + s["d1"]) / 2),
-                protocol_cut=cut, lp_fee=s["fee"] / 1e6 * (1 - cut), tvl=tvl, vol7=v7, vol30=v30,
+                protocol_cut=cut, lp_fee=s["fee"] / 1e6 * (1 - cut), tvl=tvl, vol24=v24, vol7=v7, vol30=v30, sigma_day=sigma_day,
                 created=created, age_days=age)
     info["flags"] = quality_flags(info)
     return info
