@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rwalp · 代币化美股 LP 工具</title>
+<style>
+  :root { --bg:#0e1116; --panel:#161b22; --line:#262d37; --text:#e6edf3; --mute:#8b949e; --ok:#3fb950; --bad:#f85149; --warn:#d29922; --acc:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 -apple-system,"PingFang SC","Noto Sans SC",sans-serif; }
+  main { max-width:980px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:16px; margin:0 0 12px; }
+  .sub { color:var(--mute); margin:0 0 24px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:20px; }
+  label { display:block; color:var(--mute); font-size:12px; margin-bottom:4px; }
+  input { width:100%; background:var(--bg); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:8px 10px; font:inherit; font-variant-numeric:tabular-nums; }
+  .row { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); margin-bottom:12px; }
+  .wide { grid-column:1/-1; }
+  button { background:var(--acc); color:#0e1116; border:0; border-radius:6px; padding:9px 18px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .chips button { background:var(--line); color:var(--text); font-weight:400; padding:4px 10px; margin:0 6px 6px 0; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { text-align:right; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--mute); font-weight:400; font-size:12px; }
+  .scroll { overflow-x:auto; }
+  .flags div { padding:2px 0; } .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .mute { color:var(--mute); }
+  .kpi { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin:16px 0; }
+  .kpi div { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .kpi b { display:block; font-size:18px; font-variant-numeric:tabular-nums; }
+  .kpi span { color:var(--mute); font-size:12px; }
+  .err { color:var(--bad); }
+  code { background:var(--bg); padding:1px 5px; border-radius:4px; }
+  footer { color:var(--mute); font-size:12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>rwalp</h1>
+  <p class="sub">BSC 代币化美股（bStocks）V3 集中流动性做市工具：池子体检 · 手续费估算 · 区间与调仓回测 · Telegram 风控提醒。只读链上数据，不连接钱包。</p>
+
+  <section>
+    <h2>池子体检与手续费估算</h2>
+    <div class="chips" id="chips"></div>
+    <div class="row">
+      <div class="wide"><label>池子地址（PancakeSwap V3 / Uniswap V3，股票/USDT 或 股票/USDC）</label><input id="pool" value="0xe9b9998b2ec5430d2246c7f1f8d9f298c97d7365"></div>
+      <div><label>区间下沿（美元，留空 = 当前价 −4%）</label><input id="lo" type="number" step="any"></div>
+      <div><label>区间上沿（美元，留空 = 当前价 +6%）</label><input id="hi" type="number" step="any"></div>
+      <div><label>本金（美元）</label><input id="cap" type="number" value="1000"></div>
+    </div>
+    <button id="go">体检</button>
+    <div id="out"></div>
+  </section>
+
+  <section>
+    <h2>区间与调仓回测</h2>
+    <p class="mute">用该池子最近约 40 天的小时 K 线。<b>静态</b>：出区间不动；<b>调仓</b>：出区间后把区间朝出界方向平移（按区间对数宽度的比例），计入 swap 手续费、价格冲击和 gas（约 $0.1/次）。</p>
+    <div class="row">
+      <div class="wide"><label>区间组合（相对开仓价的百分比，逗号分隔）</label><input id="ranges" value="-3:3,-4:6,-5:7"></div>
+      <div><label>平移比例</label><input id="shift" type="number" value="0.5" step="0.1"></div>
+      <div><label>滚动窗口（天）</label><input id="days" type="number" value="7"></div>
+      <div><label>只在美股交易时段调仓</label><input id="mh" type="checkbox" checked style="width:auto"></div>
+    </div>
+    <button id="bt">回测</button>
+    <div id="btout"></div>
+  </section>
+
+  <section>
+    <h2>bStocks 治理状态</h2>
+    <p class="mute">所有 bStocks 代币共用同一个 Beacon、PauseManager、Compliance，在它们之间分散分散不了发行方风险。</p>
+    <div id="gov" class="scroll mute">加载中…</div>
+  </section>
+
+  <section>
+    <h2>Telegram 提醒</h2>
+    <div id="tg"></div>
+    <p class="mute">命令：<code>/watch 池子地址 下沿 上沿</code> 订阅出区间/近区间提醒 · <code>/check 池子地址</code> 体检 · <code>/list</code> · <code>/unwatch 编号</code> · <code>/stop</code>。订阅后自动接收治理告警（升级、暂停、黑名单、大额增发）。</p>
+  </section>
+
+  <footer>数据：BSC 公共 RPC + GeckoTerminal。估算基于历史成交量和当前流动性，不构成投资建议。<a href="https://github.com/silasxbt/rwa-lp" style="color:var(--acc)">源码</a> · <a href="/api/docs" style="color:var(--acc)">API</a></footer>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const usd = (v, d = 2) => "$" + Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
+const pct = (v, d = 1) => (v * 100).toFixed(d) + "%";
+const sgn = (v, d = 2) => (v >= 0 ? "+" : "−") + usd(Math.abs(v), d);
+const cls = v => v >= 0 ? "ok" : "bad";
+const POOLS = {QQQB:"0xfc4e77248b76fefc27c4cac7151a2ee5b5cc590e", AAPLB:"0xe9b9998b2ec5430d2246c7f1f8d9f298c97d7365",
+  GOOGLB:"0x89001d846f7ca36ee089f73eefc25657e1798144", NVDAB:"0x8fb4243b553ac29ba088acf00b9b7da24bd6690c",
+  BABAB:"0xfd95cb1391999006eb91797a7c62acfe88b20292", PDDB:"0xd0c2a4dc7c581db2660286660b703cf6883f29ba",
+  MSTRB:"0x692081209619735f25700557078ab084d3e5d007"};
+$("chips").innerHTML = Object.entries(POOLS).map(([s, a]) => `<button data-a="${a}">${s}</button>`).join("");
+$("chips").onclick = e => { if (e.target.dataset.a) { $("pool").value = e.target.dataset.a; $("lo").value = $("hi").value = ""; check(); } };
+
+async function api(path) {
+  const r = await fetch(path); const j = await r.json();
+  if (!r.ok) throw new Error(j.detail || r.statusText); return j;
+}
+async function run(btn, box, fn) {
+  btn.disabled = true; box.innerHTML = '<p class="mute">查询中…（GeckoTerminal 限流时可能要等几十秒）</p>';
+  try { box.innerHTML = await fn(); } catch (e) { box.innerHTML = `<p class="err">${e.message}</p>`; }
+  btn.disabled = false;
+}
+
+function check() {
+  run($("go"), $("out"), async () => {
+    const q = new URLSearchParams({address: $("pool").value.trim(), capital: $("cap").value});
+    if ($("lo").value) q.set("lo", $("lo").value); if ($("hi").value) q.set("hi", $("hi").value);
+    const {pool: p, estimate: e} = await api("/api/pool?" + q);
+    if (!$("lo").value) $("lo").value = e.lo.toFixed(2); if (!$("hi").value) $("hi").value = e.hi.toFixed(2);
+    const flags = p.flags.map(f => `<div class="${f.ok === true ? "ok" : f.ok === false ? "bad" : "warn"}">${f.ok === true ? "✓" : f.ok === false ? "✗" : "!"} ${f.text}</div>`).join("");
+    return `<h2 style="margin-top:20px">${p.name} · ${usd(p.price)}</h2>
+      <div class="flags">${flags}</div>
+      <div class="kpi">
+        <div><span>你的份额</span><b>${pct(e.share, 3)}</b></div>
+        <div><span>手续费/天（7日均量）</span><b>${usd(e.fee_day7)}</b></div>
+        <div><span>手续费/天（30日均量）</span><b>${usd(e.fee_day30)}</b></div>
+        <div><span>手续费年化 7日 / 30日</span><b>${pct(e.apr7, 0)} / ${pct(e.apr30, 0)}</b></div>
+      </div>
+      <p class="mute">${e.in_range ? "" : "⚠ 当前价不在区间内，不赚手续费。"}估算 = 成交量 × LP 实得费率 × 你在当前价位的流动性占比；未扣无常损失，别人加减流动性会改变份额。TVL ${usd(p.tvl, 0)} · 日均成交 7日 ${usd(p.vol7, 0)} / 30日 ${usd(p.vol30, 0)}</p>`;
+  });
+}
+
+function backtest() {
+  run($("bt"), $("btout"), async () => {
+    const q = new URLSearchParams({address: $("pool").value.trim(), ranges: $("ranges").value, capital: $("cap").value,
+      days: $("days").value, shift: $("shift").value, market_hours: $("mh").checked});
+    const b = await api("/api/backtest?" + q);
+    const d0 = new Date(b.start * 1000).toISOString().slice(0, 10), d1 = new Date(b.end * 1000).toISOString().slice(0, 10);
+    const rows = b.results.map(r => {
+      const s = r.static, x = r.rebalance, w = r.rolling;
+      return `<tr><td>${r.lo}% / +${r.hi}%</td>
+        <td class="${cls(w.net)}">${sgn(w.net)}</td><td>${pct(w.in_range, 0)}</td>
+        <td>${pct(s.in_range, 0)}</td><td>${pct(s.fee_apr)}</td><td class="${cls(s.vs_hodl_apr)}">${pct(s.vs_hodl_apr)}</td>
+        <td>${x.rebalances}</td><td>${usd(x.cost_per_rebalance)}</td><td>${pct(x.in_range, 0)}</td><td>${pct(x.fee_apr)}</td>
+        <td class="bad">−${pct(x.cost_apr)}</td><td class="${cls(x.vs_hodl_apr)}">${pct(x.vs_hodl_apr)}</td></tr>`;
+    }).join("");
+    return `<p class="mute">${b.name} · ${d0} → ${d1}（${b.hours} 小时）· 本金 ${usd(b.capital, 0)} · LP 实得费率 ${pct(b.lp_fee, 3)}</p>
+      <div class="scroll"><table>
+      <tr><th></th><th colspan="2">滚动 ${b.days} 天（不调仓）</th><th colspan="3">整段 · 静态</th><th colspan="6">整段 · 出区间平移 ${pct(b.shift, 0)}</th></tr>
+      <tr><th>区间</th><th>平均净收益</th><th>在区间</th><th>在区间</th><th>手续费年化</th><th>相对持币</th>
+          <th>调仓次数</th><th>单次成本</th><th>在区间</th><th>手续费年化</th><th>调仓成本</th><th>相对持币</th></tr>${rows}</table></div>
+      <p class="mute">“相对持币”= LP 最终价值 + 手续费 − 开仓时同等持仓不动的价值，已含无常损失和调仓成本，年化。单次成本 = 交易池费率 × swap 额 + 价格冲击 + gas。样本只有约 40 天、不含财报日，结论偏乐观。</p>`;
+  });
+}
+
+async function gov() {
+  try {
+    const {tokens, state} = await api("/api/bstocks");
+    const syms = Object.keys(tokens);
+    const flag = (s, k) => state[`${s} ${k}`];
+    const blocked = s => Object.keys(state).some(k => k.startsWith(`${s} 黑名单`) && state[k]);
+    $("gov").innerHTML = `<table><tr><th>代币</th><th>暂停</th><th>增发开关</th><th>Admin</th><th>Issuer</th><th>主池被拉黑</th><th>Beacon</th></tr>` +
+      syms.map(s => `<tr><td>${s} <span class="mute">${tokens[s].slice(0, 8)}…</span></td>
+        <td class="${flag(s, "暂停") ? "bad" : "ok"}">${flag(s, "暂停") ? "已暂停" : "正常"}</td>
+        <td class="warn">${flag(s, "增发开关") ? "开启" : "关闭"}</td><td>${flag(s, "Admin数")}</td><td>${flag(s, "Issuer数")}</td>
+        <td class="${blocked(s) ? "bad" : "ok"}">${blocked(s) ? "是" : "否"}</td><td class="mute">${(state[`${s} Beacon`] || "").slice(0, 10)}…</td></tr>`).join("") +
+      `</table><p>逻辑合约 <code>${state["Beacon逻辑合约"]}</code></p>`;
+  } catch (e) { $("gov").innerHTML = `<p class="err">${e.message}</p>`; }
+}
+
+const bot = "{{BOT}}";
+$("tg").innerHTML = bot ? `<p>机器人：<a style="color:var(--acc)" href="https://t.me/${bot}">@${bot}</a>，发送 <code>/start</code> 开始。</p>` : `<p class="warn">机器人即将上线。</p>`;
+$("go").onclick = check; $("bt").onclick = backtest;
+check(); gov();
+</script>
+</body>
+</html>

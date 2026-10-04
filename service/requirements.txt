@@ -1,0 +1,5 @@
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+requests==2.32.*
+pycryptodome==3.21.*
+google-cloud-firestore==2.19.*
