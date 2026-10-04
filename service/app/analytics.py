@@ -116,16 +116,57 @@ def rolling(o, lc, fee, lo, hi, capital, W):
     f, il, inr = (st.mean(x[j] for x in res) for j in range(3))
     return dict(fees=f, il=il, net=f + il, in_range=inr, worst=min(x[0] + x[1] for x in res), windows=len(res))
 
-def simulate(o, lc, fee_tier, lp_fee, lo, hi, capital, rebalance, shift=0.5, market_hours=True):
-    """整段样本模拟。rebalance=True 时出区间按区间对数宽度的 shift 比例朝出界方向平移，直到价格回到区间内。"""
+HEDGE_PRESETS = {
+    # rate: 空头年化持仓成本（资金费/融券费）；fee: 每次调整对冲的成交费率+点差；fixed: 每笔固定成本；
+    # leverage: 保证金杠杆（保证金 = 名义 / leverage，计入总占用资金）；hours: 只在美股交易时段调整
+    "perp": dict(name="永续合约", rate=0.05, fee=0.0006, fixed=0.05, leverage=3, hours=False),
+    "broker": dict(name="美股券商融券", rate=0.01, fee=0.0003, fixed=1.0, leverage=2, hours=True),
+}
+
+def real_hourly(i, o):
+    """对齐到链上小时 K 线的真实股价（Yahoo 小时线 × uiMultiplier，休市时沿用上一价）。取不到时返回 None。"""
+    import bisect, requests
+    from .position import TICKERS
+    sym = (i["symbol0"] if i["stable_is_1"] else i["symbol1"]).upper()
+    tk = TICKERS.get(sym) or (sym[:-1] if sym.endswith("B") else None)
+    if not tk: return None
+    def f():
+        r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}", params={"interval": "60m", "range": "3mo"},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=15).json()["chart"]["result"][0]
+        return [(t + 3600, c) for t, c in zip(r["timestamp"], r["indicators"]["quote"][0]["close"]) if c]  # 用小时收盘时刻
+    try:
+        q = cached(("yahoo-h", tk), 1800, f)
+        mult = int(call(i["stock"], "uiMultiplier()"), 16) / 1e18 if i["bstocks"] else 1.0
+    except Exception:
+        return None
+    ts = [t for t, _ in q]
+    out = []
+    for c in o:
+        k = bisect.bisect_right(ts, c[0]) - 1
+        out.append(q[k][1] * mult if k >= 0 else None)
+    first = next((v for v in out if v), None)
+    return [v or first for v in out] if first else None
+
+def simulate(o, lc, fee_tier, lp_fee, lo, hi, capital, rebalance, shift=0.5, market_hours=True, hedge=None, real=None):
+    """整段样本模拟。rebalance=True 时出区间按区间对数宽度的 shift 比例朝出界方向平移，直到价格回到区间内。
+    hedge 不为空时做空 LP 中的股票数量（delta 对冲）：对冲腿按真实股价 real 计盈亏，目标数量按真实股价下 LP 的持股量，
+    偏离超过 threshold 时调整。链上价相对真实价的噪声会均值回归，不去对冲它。"""
+    real = real or [c[4] for c in o]
     p0 = o[0][4]; a, b = p0 * (1 + lo / 100), p0 * (1 + hi / 100)
     L = liq(capital, p0, a, b); x0, y0 = amounts(L, p0, a, b)
     fees = swap_fee = impact = gas = 0.0; n = inr = 0
-    for h in o[1:]:
-        p = h[4]
+    h = x0 if hedge else 0.0
+    margin = x0 * real[0] / hedge["leverage"] if hedge else 0.0
+    hpnl = hcarry = htrade = 0.0; ht = 0
+    peak, mdd, prev = capital + margin, 0.0, real[0]
+    for k, c in enumerate(o[1:], 1):
+        p, rp = c[4], real[k]
+        if hedge:
+            hpnl -= h * (rp - prev); hcarry += h * rp * hedge["rate"] / 8760
+        prev = rp
         if a <= p <= b:
-            fees += h[5] * lp_fee * L / (lc + L); inr += 1
-        elif rebalance and (not market_hours or us_open(h[0])):
+            fees += c[5] * lp_fee * L / (lc + L); inr += 1
+        elif rebalance and (not market_hours or us_open(c[0])):
             x, y = amounts(L, p, a, b); val = x * p + y
             step = (b / a) ** shift
             while p > b: a, b = a * step, b * step
@@ -135,27 +176,64 @@ def simulate(o, lc, fee_tier, lp_fee, lo, hi, capital, rebalance, shift=0.5, mar
             c_fee, c_imp = sw * fee_tier, sw * sw / (lc * math.sqrt(p))
             swap_fee += c_fee; impact += c_imp; gas += GAS_USD; n += 1
             L = liq(val - c_fee - c_imp - GAS_USD, p, a, b)
+        x, y = amounts(L, p, a, b)
+        if hedge:
+            tx, _ = amounts(L, rp, a, b)
+            if abs(tx - h) * rp > hedge["threshold"] * (x * p + y) and (not hedge["hours"] or us_open(c[0])):
+                htrade += abs(tx - h) * rp * hedge["fee"] + hedge["fixed"]; h = tx; ht += 1
+        eq = x * p + y + fees + hpnl - hcarry - htrade + margin
+        peak = max(peak, eq); mdd = max(mdd, 1 - eq / peak)
     pe = o[-1][4]; x, y = amounts(L, pe, a, b)
     hours = len(o) - 1; ann = 8760 / hours / capital
     lp_val, hodl = x * pe + y, x0 * pe + y0
     cost = swap_fee + impact + gas
-    return dict(rebalances=n, in_range=inr / hours, fees=fees, swap_fee=swap_fee, impact=impact, gas=gas,
-                cost=cost, cost_per_rebalance=cost / n if n else 0, fee_apr=fees * ann, cost_apr=cost * ann,
-                vs_hodl_apr=(lp_val + fees - hodl) * ann, pnl_apr=(lp_val + fees - capital) * ann,
-                hodl_apr=(hodl - capital) * ann, days=hours / 24)
+    r = dict(rebalances=n, in_range=inr / hours, fees=fees, swap_fee=swap_fee, impact=impact, gas=gas,
+             cost=cost, cost_per_rebalance=cost / n if n else 0, fee_apr=fees * ann, cost_apr=cost * ann,
+             vs_hodl_apr=(lp_val + fees - hodl) * ann, pnl_apr=(lp_val + fees - capital) * ann,
+             hodl_apr=(hodl - capital) * ann, days=hours / 24, max_drawdown=mdd)
+    if hedge:
+        tot = capital + margin; ann2 = 8760 / hours / tot
+        pnl = lp_val + fees - capital + hpnl - hcarry - htrade  # lp_val 已扣调仓成本
+        r.update(hedge_trades=ht, hedge_pnl=hpnl, hedge_carry=hcarry, hedge_trade_cost=htrade, margin=margin,
+                 hedge_cost=hcarry + htrade, hedge_cost_apr=(hcarry + htrade) * ann2, total_capital=tot,
+                 hedged_apr=pnl * ann2, residual_apr=(lp_val - capital + hpnl) * ann2)
+    return r
 
-def backtest(pool, ranges, capital=1000, days=7, shift=0.5, market_hours=True):
+def hedge_cfg(preset, threshold=0.05, **over):
+    cfg = dict(HEDGE_PRESETS[preset], threshold=threshold)
+    cfg.update({k: v for k, v in over.items() if v is not None})
+    return cfg
+
+def backtest(pool, ranges, capital=1000, days=7, shift=0.5, market_hours=True, hedge=None,
+             sizes=(1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000)):
     i = pool_info(pool)
     o = hourly(i)
     if len(o) < days * 24 + 48: raise ValueError("历史数据不足")
+    real = real_hourly(i, o) if hedge else None
+    sim = lambda lo, hi, cap, hg=None: simulate(o, i["Lh"], i["fee"] / 1e6, i["lp_fee"], lo, hi, cap, True, shift, market_hours, hg, real)
     out = []
     for lo, hi in ranges:
         out.append(dict(lo=lo, hi=hi,
                         rolling=rolling(o, i["Lh"], i["lp_fee"], lo, hi, capital, days * 24),
                         static=simulate(o, i["Lh"], i["fee"] / 1e6, i["lp_fee"], lo, hi, capital, False),
-                        rebalance=simulate(o, i["Lh"], i["fee"] / 1e6, i["lp_fee"], lo, hi, capital, True, shift, market_hours)))
+                        rebalance=sim(lo, hi, capital),
+                        hedged=sim(lo, hi, capital, hedge) if hedge else None))
+    scale = None
+    if hedge:
+        lo, hi = ranges[0]
+        rows = []
+        for cap in sorted(set(sizes) | {capital}):
+            u, hd = sim(lo, hi, cap), sim(lo, hi, cap, hedge)
+            free = sim(lo, hi, cap, dict(hedge, rate=0, fee=0, fixed=0))
+            rows.append(dict(capital=cap, fee_apr=u["fee_apr"], unhedged_apr=u["pnl_apr"], unhedged_mdd=u["max_drawdown"],
+                             hedged_apr=hd["hedged_apr"], hedged_mdd=hd["max_drawdown"], hedge_cost_apr=hd["hedge_cost_apr"],
+                             edge_apr=free["hedged_apr"],
+                             hedge_trades=hd["hedge_trades"], fixed_share=hd["hedge_trades"] * hedge["fixed"] / hd["hedge_cost"] if hd["hedge_cost"] else 0))
+        ok = [r["capital"] for r in rows if r["hedged_apr"] > 0 and r["hedge_cost_apr"] < 0.25 * r["fee_apr"]]
+        scale = dict(lo=lo, hi=hi, rows=rows, breakeven=min(ok) if ok else None)
     return dict(pool=i["pool"], name=i["name"], hours=len(o), start=o[0][0], end=o[-1][0], lp_fee=i["lp_fee"],
-                fee_tier=i["fee"] / 1e6, capital=capital, days=days, shift=shift, market_hours=market_hours, results=out)
+                fee_tier=i["fee"] / 1e6, capital=capital, days=days, shift=shift, market_hours=market_hours,
+                hedge=hedge, hedge_price="真实股价（Yahoo 小时线）" if real else "链上价格（未取到真实股价）", results=out, scale=scale)
 
 def depth(pool, span=0.12, buckets=60):
     """当前价 ±span 内的活跃流动性分布（人类单位），用于画深度图。"""
