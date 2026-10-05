@@ -71,9 +71,7 @@ def quality_flags(i):
     drop = i["vol7"] / i["vol30"] - 1 if i["vol30"] else 0
     ok(drop > -0.4, f"7日成交量较30日均值 {drop*100:+.0f}%")
     ok(i["protocol_cut"] <= 0.34, f"协议抽成 {i['protocol_cut']*100:.0f}%，LP 实得费率 {i['lp_fee']*100:.4f}%")
-    if i["bstocks"]:
-        f.append({"ok": None, "text": "bStocks 发行：发行方可升级/暂停/拉黑/增发，所有 bStocks 代币共用同一套权限（见治理状态）"})
-    else:
+    if not i["bstocks"]:
         f.append({"ok": None, "text": "非 bStocks 代币，需单独审计发行方权限"})
     return f
 

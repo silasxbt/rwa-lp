@@ -101,7 +101,7 @@
   .stats dt { color:var(--dim); font-size:11px; }
   .stats dd { margin:2px 0 0; font:500 16px var(--mono); }
 
-  .checks { display:grid; grid-template-columns:1fr 1fr; gap:2px 20px; margin:0; padding:0; list-style:none; }
+  .checks { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:2px 20px; margin:0; padding:0; list-style:none; }
   .checks li { display:flex; gap:8px; align-items:baseline; padding:3px 0; border-bottom:1px dashed var(--rule); }
   .dot { width:7px; height:7px; border-radius:50%; flex:none; transform:translateY(-1px); }
   .d-ok { background:var(--in); } .d-bad { background:var(--risk); } .d-info { background:var(--out); }
@@ -141,11 +141,11 @@
   .empty { color:var(--dim); padding:18px; border:1px dashed var(--rule2); border-radius:4px; }
   .bar { display:inline-block; height:5px; background:var(--ice); border-radius:1px; vertical-align:middle; margin-left:6px; opacity:.7; }
 
-  .gov td:first-child { font-family:var(--sans); }
   .bot { display:flex; gap:16px; align-items:center; border:1px solid var(--rule); border-radius:4px; padding:12px 14px; background:var(--deck); flex-wrap:wrap; }
   .bot code { color:var(--ice); }
   footer { color:var(--dim); font-size:11px; margin-top:28px; max-width:78ch; }
 
+  @media (max-width:1180px) { .checks { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width:860px) {
     .shell { grid-template-columns:1fr; }
     aside { border-right:0; border-bottom:1px solid var(--rule); }
@@ -231,11 +231,6 @@
       <div id="btout"></div>
     </section>
 
-    <section>
-      <h2>bStocks 治理状态 <small>所有 bStocks 代币共用同一套升级、暂停、合规合约</small></h2>
-      <div id="gov" class="empty">读取链上状态…</div>
-    </section>
-
     <section id="bot">
       <h2>Telegram 提醒</h2>
       <div class="bot" id="tg"></div>
@@ -312,11 +307,11 @@ async function check() {
     const [pd, dd] = await Promise.all([api("/api/pool?" + q), api("/api/depth?address=" + address).catch(() => null)]);
     if (seq !== checkSeq) return;
     poolData = pd; depthData = dd;
-    const {pool: p, estimate: e} = pd;
+    const {pool: p, estimate: e, governance: gv} = pd;
     if (!$("lo").value) $("lo").value = e.lo.toFixed(2);
     if (!$("hi").value) $("hi").value = e.hi.toFixed(2);
     const state = e.in_range ? `<span class="pos">在区间内</span>` : `<span class="neg">当前价不在区间内，不赚手续费</span>`;
-    const items = p.flags.map(f => `<li><span class="dot ${f.ok === true ? "d-ok" : f.ok === false ? "d-bad" : "d-info"}"></span>${f.text}</li>`).join("");
+    const items = [...p.flags, ...(gv || [])].map(f => `<li><span class="dot ${f.ok === true ? "d-ok" : f.ok === false ? "d-bad" : "d-info"}"></span>${f.text}</li>`).join("");
     $("out").innerHTML = `<div class="enter">
       <div class="head"><h1>${p.name}</h1><span class="price">${usd(p.price)}</span>
         <a class="addr num" href="https://bscscan.com/address/${p.pool}" target="_blank" rel="noopener">${short(p.pool)}</a>${state}</div>
@@ -448,21 +443,6 @@ async function backtest() {
   if (seq === btSeq) { busy(btn, false, "运行回测"); loading($("btout"), false); }
 }
 
-async function gov() {
-  try {
-    const {tokens, state} = await api("/api/bstocks");
-    const cell = (bad, yes, no) => `<td class="${bad ? "bad" : "pos"}">${bad ? yes : no}</td>`;
-    const blocked = s => Object.keys(state).some(k => k.startsWith(`${s} 黑名单`) && state[k]);
-    $("gov").className = "scroll";
-    $("gov").innerHTML = `<table class="gov"><tr><th>代币</th><th>合约</th><th>转账</th><th>增发</th><th>Admin</th><th>Issuer</th><th>主池黑名单</th><th>升级入口</th></tr>` +
-      Object.entries(tokens).map(([s, a]) => `<tr><td>${s}</td><td><a href="https://bscscan.com/token/${a}" target="_blank" rel="noopener">${short(a)}</a></td>
-        ${cell(state[`${s} 暂停`], "已暂停", "正常")}<td class="neg">${state[`${s} 增发开关`] ? "开启" : "关闭"}</td>
-        <td>${state[`${s} Admin数`]}</td><td>${state[`${s} Issuer数`]}</td>${cell(blocked(s), "已拉黑", "无")}
-        <td class="dim">${short(state[`${s} Beacon`] || "0x0000000000")}</td></tr>`).join("") +
-      `</table>`;
-  } catch (err) { $("gov").innerHTML = `<span class="err">${err.message}</span>`; }
-}
-
 async function block() {
   try { $("block").textContent = "#" + (await api("/api/head")).block.toLocaleString("en-US"); } catch {}
 }
@@ -474,7 +454,7 @@ $("tg").innerHTML = bot
      <span class="dim">价格接近或超出区间、区间评级变化、发行方升级、暂停、拉黑、大额增发时推送</span>`
   : `<span class="dim">机器人尚未配置。</span>`;
 $("go").onclick = check; $("bt").onclick = backtest;
-syncTickers(); presets(); check(); gov(); block(); setInterval(block, 6000);
+syncTickers(); presets(); check(); block(); setInterval(block, 6000);
 </script>
 </body>
 </html>

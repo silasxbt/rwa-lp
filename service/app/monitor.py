@@ -178,3 +178,36 @@ def rating_alerts(ws):
             + "\n".join("· " + t for t in r["reasons"]))
         sent += 1
     return sent
+
+
+def token_governance(token, pool):
+    """单个 bStocks 代币 + 池子的治理安全项，供页面体检使用。ok: True 安全 / False 危险 / None 需留意。"""
+    def f():
+        r = calls([(PM, "isTokenPaused(address)", pad(token)),
+                   (COMPLIANCE, "blockedAddresses(address,address)", pad(token) + pad(pool)),
+                   (COMPLIANCE, "sanctionedAddresses(address)", pad(pool)),
+                   (token, "mintEnabled()", ""),
+                   (token, "getRoleMemberCount(bytes32)", k("ISSUER_ROLE")),
+                   (token, "getRoleMemberCount(bytes32)", "0" * 64),
+                   (token, "getRoleMember(bytes32,uint256)", "0" * 128),
+                   (token, "compliance()", ""), (token, "pauseManager()", ""),
+                   (BSTOCKS_BEACON, "owner()", "")])
+        v = lambda j: int(r[j], 16) if r[j] else None
+        admin = addr(r[6]) if r[6] else None
+        owner = addr(r[9]) if r[9] else None
+        codes = batch([("eth_getCode", [a, "latest"]) for a in (admin, owner) if a])
+        admin_eoa = codes[0] in ("0x", None) if admin else None
+        owner_eoa = codes[-1] in ("0x", None) if owner else None
+        beacon = addr(rpc("eth_getStorageAt", [token, BEACON_SLOT, "latest"]))
+        items = []
+        add = lambda ok, text: items.append({"ok": ok, "text": text})
+        add(not v(0), "转账正常，未被暂停" if not v(0) else "代币已被暂停，转账和撤池都会失败")
+        bl = v(1) or v(2)
+        add(not bl, "池子未被拉黑或制裁" if not bl else "池子已被拉黑或列入制裁名单")
+        add(None if v(3) else True, f"增发已开启，{v(4)} 个 Issuer 可铸币" if v(3) else "增发已关闭")
+        add(None if admin_eoa else True, f"Admin {v(5)} 个，" + ("是单一私钥钱包" if admin_eoa else "是合约（可能为多签）"))
+        add(None if owner_eoa else True, "升级权限在单签钱包，无时间锁" if owner_eoa else "升级权限在合约钱包")
+        same = addr(r[7]) == COMPLIANCE and addr(r[8]) == PM and beacon == BSTOCKS_BEACON
+        add(same, "权限合约与审计时一致" if same else "合规、暂停或升级合约已被替换，与审计时不一致")
+        return items
+    return cached(("tgov", token, pool), 60, f)

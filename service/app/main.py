@@ -38,7 +38,12 @@ def pool(address: str, lo: float | None = None, hi: float | None = None, capital
     i = _pool(address)
     lo = lo or i["price"] * 0.96
     hi = hi or i["price"] * 1.06
-    return {"pool": {k: v for k, v in i.items() if k != "L"}, "estimate": analytics.estimate(i, min(lo, hi), max(lo, hi), capital)}
+    gov = None
+    if i["bstocks"]:
+        try: gov = monitor.token_governance(i["stock"], i["pool"])
+        except Exception: gov = None
+    return {"pool": {k: v for k, v in i.items() if k != "L"}, "estimate": analytics.estimate(i, min(lo, hi), max(lo, hi), capital),
+            "governance": gov}
 
 @app.get("/api/backtest")
 def backtest(address: str, ranges: str = "-3:3,-4:6,-5:7", capital: float = Query(1000, gt=0, le=1e8),
