@@ -61,18 +61,18 @@ def pool_info(pool):
 
 def quality_flags(i):
     f = []
-    ok = lambda good, text: f.append({"ok": good, "text": text})
-    ok(bool(i["dex"]), f"官方 factory：{i['dex']}" if i["dex"] else "factory 不是 PancakeSwap/Uniswap 官方，可能是仿盘")
-    ok(i["canonical"], "factory.getPool 回查一致" if i["canonical"] else "factory.getPool 回查不一致")
-    ok(i["tvl"] >= 200_000, f"TVL ${i['tvl']:,.0f}" + ("" if i["tvl"] >= 200_000 else "，偏浅，大额进出滑点大、份额易被稀释"))
-    ok(i["age_days"] >= 30, f"上线 {i['age_days']} 天" + ("" if i["age_days"] >= 30 else "，数据太短，成交量可能是新币热度"))
+    ok = lambda cat, good, text: f.append({"cat": cat, "ok": good, "text": text})
+    ok("池子", bool(i["dex"]), f"官方 factory：{i['dex']}" if i["dex"] else "factory 不是 PancakeSwap/Uniswap 官方，可能是仿盘")
+    ok("池子", i["canonical"], "factory.getPool 回查一致" if i["canonical"] else "factory.getPool 回查不一致")
+    ok("池子", i["age_days"] >= 30, f"上线 {i['age_days']} 天" + ("" if i["age_days"] >= 30 else "，数据太短，成交量可能是新币热度"))
+    ok("收益", i["tvl"] >= 200_000, f"TVL ${i['tvl']:,.0f}" + ("" if i["tvl"] >= 200_000 else "，偏浅，大额进出滑点大、份额易被稀释"))
     r = i["vol30"] / i["tvl"] if i["tvl"] else 0
-    ok(r >= 0.5, f"30日 成交/TVL = {r:.2f}" + ("" if r >= 0.5 else "，手续费收入偏低"))
+    ok("收益", r >= 0.5, f"30日 成交/TVL = {r:.2f}" + ("" if r >= 0.5 else "，手续费收入偏低"))
     drop = i["vol7"] / i["vol30"] - 1 if i["vol30"] else 0
-    ok(drop > -0.4, f"7日成交量较30日均值 {drop*100:+.0f}%")
-    ok(i["protocol_cut"] <= 0.34, f"协议抽成 {i['protocol_cut']*100:.0f}%，LP 实得费率 {i['lp_fee']*100:.4f}%")
+    ok("收益", drop > -0.4, f"7日成交量较30日均值 {drop*100:+.0f}%" + ("" if drop > -0.4 else "，热度在退"))
+    ok("收益", i["protocol_cut"] <= 0.34, f"协议抽成 {i['protocol_cut']*100:.0f}%，LP 实得费率 {i['lp_fee']*100:.4f}%")
     if not i["bstocks"]:
-        f.append({"ok": None, "text": "非 bStocks 代币，需单独审计发行方权限"})
+        f.append({"cat": "发行方", "ok": None, "text": "非 bStocks 代币，需单独审计发行方权限"})
     return f
 
 def liq(value, p, a, b):

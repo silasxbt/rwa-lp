@@ -200,7 +200,7 @@ def token_governance(token, pool):
         owner_eoa = codes[-1] in ("0x", None) if owner else None
         beacon = addr(rpc("eth_getStorageAt", [token, BEACON_SLOT, "latest"]))
         items = []
-        add = lambda ok, text: items.append({"ok": ok, "text": text})
+        add = lambda ok, text: items.append({"cat": "发行方", "ok": ok, "text": text})
         add(not v(0), "转账正常，未被暂停" if not v(0) else "代币已被暂停，转账和撤池都会失败")
         bl = v(1) or v(2)
         add(not bl, "池子未被拉黑或制裁" if not bl else "池子已被拉黑或列入制裁名单")
