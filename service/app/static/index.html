@@ -95,6 +95,13 @@
   .legend { display:flex; gap:14px; color:var(--dim); font-size:11px; }
   .legend b { display:inline-block; width:8px; height:8px; margin-right:5px; vertical-align:0; border-radius:1px; }
 
+  .win-bar { display:flex; align-items:center; gap:10px; margin:12px 0 -4px; font-size:12px; flex-wrap:wrap; }
+  .seg { display:inline-flex; border:1px solid var(--rule2); border-radius:4px; padding:2px; background:var(--base); }
+  .seg button { font:500 12px var(--mono); color:var(--dim); background:transparent; border:0; border-radius:3px; padding:2px 9px; cursor:pointer;
+                transition:color 150ms ease, background-color 150ms ease, transform 160ms var(--ease-out); }
+  .seg button[aria-selected="true"] { color:var(--base); background:var(--ice); }
+  .seg button:active { transform:scale(.95); }
+  @media (hover:hover) and (pointer:fine) { .seg button:not([aria-selected="true"]):hover { color:var(--text); } }
   .stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); border:1px solid var(--rule); border-radius:4px; margin:12px 0; background:var(--deck); }
   .stats div { padding:9px 12px; border-left:1px solid var(--rule); }
   .stats div:first-child { border-left:0; }
@@ -331,16 +338,20 @@ async function check() {
       <div class="rail">${railSVG() || '<p class="dim">深度数据暂不可用</p>'}</div>
       <div class="legend"><span><b style="background:var(--rule2)"></b>其他 LP 的活跃流动性</span><span><b style="background:var(--ice)"></b>落在你区间内的部分</span><span><b style="background:var(--in)"></b>当前价</span></div>
       <div id="posbox"></div>
+      <div class="win-bar"><span class="dim">收益口径</span><div class="seg" role="tablist" id="win">${WIN.map(k =>
+        `<button type="button" role="tab" data-w="${k}" aria-selected="${k === winKey}">${k}</button>`).join("")}</div>
+        <span class="dim" id="winnote"></span></div>
       <dl class="stats">
-        <div><dt>近 24h 年化</dt><dd id="apr24">…</dd></div>
-        <div><dt>手续费/天 · 7 日量</dt><dd>${usd(e.fee_day7)}</dd></div>
-        <div><dt>手续费/天 · 30 日量</dt><dd>${usd(e.fee_day30)}</dd></div>
-        <div><dt>手续费年化</dt><dd>${pct(e.apr7, 0)} <span class="dim">/ ${pct(e.apr30, 0)}</span></dd></div>
+        <div><dt>你的份额</dt><dd>${pct(e.share, 3)}</dd></div>
+        <div><dt>日均成交</dt><dd id="w-vol">—</dd></div>
+        <div><dt>手续费/天</dt><dd id="w-fee">—</dd></div>
+        <div><dt>手续费年化 <span class="dim">· 全池平均</span></dt><dd id="w-apr">—</dd></div>
         <div><dt>池子 TVL</dt><dd>${usd(p.tvl, 0)}</dd></div>
       </dl>
       ${risksHTML([...p.flags, ...(gv || [])])}
-      <p class="note">日均成交 7 日 ${usd(p.vol7, 0)}，30 日 ${usd(p.vol30, 0)}。手续费按你在当前价位的流动性占比估算；别人增减流动性会改变份额。</p>
+      <p class="note">手续费 = 所选口径的日均成交 × LP 实得费率 × 你在当前价位的流动性占比；别人增减流动性会改变份额。</p>
       <section style="margin-top:18px"><h2>调仓成本估算 <small id="rbmeta"></small></h2><div id="rebal" class="dim">计算中…</div></section></div>`;
+    drawWin();
     position(address, seq);
   } catch (err) {
     if (seq !== checkSeq) return;
@@ -349,6 +360,24 @@ async function check() {
     if (seq === checkSeq) { busy(btn, false, "分析"); loading($("out"), false); }
   }
 }
+
+const WIN = ["24h", "3d", "7d", "14d", "30d"];
+let winKey = WIN.includes(localStorage.getItem("rwalp.win")) ? localStorage.getItem("rwalp.win") : "7d";
+function drawWin() {
+  if (!poolData || !$("win")) return;
+  const w = poolData.estimate.windows[winKey];
+  $("w-vol").textContent = usd(w.vol, 0);
+  $("w-fee").textContent = usd(w.fee_day);
+  $("w-apr").innerHTML = `${pct(w.apr, 0)} <span class="dim">· ${pct(w.pool_apr, 0)}</span>`;
+  const all = WIN.map(k => poolData.estimate.windows[k].apr), mx = Math.max(...all), mn = Math.min(...all);
+  $("winnote").textContent = (w.partial ? "池子上线不足该天数，按已有天数平均。" : "") +
+    `各口径年化 ${pct(mn, 0)} – ${pct(mx, 0)}` + (winKey === "24h" ? "，24h 受休市和单日行情影响大" : "");
+  document.querySelectorAll("#win button").forEach(b => b.setAttribute("aria-selected", b.dataset.w === winKey));
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("#win button"); if (!b) return;
+  winKey = b.dataset.w; localStorage.setItem("rwalp.win", winKey); drawWin();
+});
 
 function risksHTML(all) {
   const cats = ["池子", "收益", "发行方"], bad = all.filter(f => f.ok !== true);
@@ -368,7 +397,6 @@ async function position(address, seq) {
     const q = new URLSearchParams({address, lo: $("lo").value, hi: $("hi").value, capital: $("cap").value || 1000, shift: $("shift").value || 0.5});
     const r = await api("/api/position?" + q), g = r.rating, f = r.fair;
     if (seq !== checkSeq) return;
-    $("apr24").innerHTML = `${pct(r.apr24, 0)}<span class="dim" style="font-size:11px"> ${usd(r.fee_day24)}/天</span>`;
     const at = v => Math.min(100, Math.max(0, v * 100)).toFixed(2);
     const pin = (v, color, label, b = "") => v == null ? "" :
       `<div class="pin ${v > .7 ? "r" : ""} ${b}" style="left:${at(v)}%;background:${color}"><span style="color:${color}">${label}</span></div>`;
@@ -396,7 +424,7 @@ async function position(address, seq) {
       <p class="note">换仓金额按出界时仓位已全部变成单一资产、要换回新区间所需配比计算；价格冲击用目标价位的链上活跃流动性估算；gas 用链上实时 gasPrice × 约 85 万 gas × Chainlink BNB 价格。调仓后年化假设近 24h 成交量不变，出界后边缘价位的竞争流动性通常更薄，所以数字偏高。周末和休市时段 24h 成交量偏低。</p>`;
   } catch (err) {
     $("posbox").innerHTML = `<p class="err">区间评估失败：${err.message}</p>`;
-    $("rebal").innerHTML = ""; $("apr24").textContent = "—";
+    $("rebal").innerHTML = "";
   }
 }
 

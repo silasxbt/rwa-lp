@@ -46,6 +46,8 @@ def pool_info(pool):
     vols = [x[5] for x in o]
     v7 = st.mean(vols[-7:]) if vols else 0
     v30 = st.mean(vols[-30:]) if vols else 0
+    v3 = st.mean(vols[-3:]) if vols else 0
+    v14 = st.mean(vols[-14:]) if vols else 0
     closes = [x[4] for x in o]
     rets = [math.log(closes[j] / closes[j - 1]) for j in range(1, len(closes)) if closes[j - 1] > 0]
     sigma_day = st.pstdev(rets) if len(rets) > 5 else 0.02
@@ -54,7 +56,7 @@ def pool_info(pool):
     created = a["pool_created_at"][:10]
     age = (dt.date.today() - dt.date.fromisoformat(created)).days
     info = dict(s, name=a["name"], price=price, L=Lraw, Lh=Lraw / 10 ** ((s["d0"] + s["d1"]) / 2),
-                protocol_cut=cut, lp_fee=s["fee"] / 1e6 * (1 - cut), tvl=tvl, vol24=v24, vol7=v7, vol30=v30, sigma_day=sigma_day,
+                protocol_cut=cut, lp_fee=s["fee"] / 1e6 * (1 - cut), tvl=tvl, vol24=v24, vol3=v3, vol7=v7, vol14=v14, vol30=v30, vol_days=len(vols), sigma_day=sigma_day,
                 created=created, age_days=age)
     info["flags"] = quality_flags(info)
     return info
@@ -83,14 +85,24 @@ def amounts(L, p, a, b):  # 股票数量, 美元数量
     sp, sa, sb = math.sqrt(min(max(p, a), b)), math.sqrt(a), math.sqrt(b)
     return L * (1 / sp - 1 / sb), L * (sp - sa)
 
+WINDOWS = [("24h", "vol24"), ("3d", "vol3"), ("7d", "vol7"), ("14d", "vol14"), ("30d", "vol30")]
+
 def estimate(i, lo, hi, capital):
     p = i["price"]
-    if not lo < p < hi: return dict(lo=lo, hi=hi, in_range=False, share=0, fee_day7=0, fee_day30=0, apr7=0, apr30=0)
-    uL = liq(capital, p, lo, hi)
-    share = uL / (i["Lh"] + uL)
-    d7, d30 = i["vol7"] * i["lp_fee"] * share, i["vol30"] * i["lp_fee"] * share
-    return dict(lo=lo, hi=hi, in_range=True, share=share, fee_day7=d7, fee_day30=d30,
-                apr7=d7 * 365 / capital, apr30=d30 * 365 / capital)
+    inr = lo < p < hi
+    share = 0.0
+    if inr:
+        uL = liq(capital, p, lo, hi)
+        share = uL / (i["Lh"] + uL)
+    days = {"24h": 1, "3d": 3, "7d": 7, "14d": 14, "30d": 30}
+    win = {}
+    for k, f in WINDOWS:
+        fd = i[f] * i["lp_fee"] * share
+        win[k] = dict(vol=i[f], fee_day=fd, apr=fd * 365 / capital, pool_apr=i[f] * i["lp_fee"] / i["tvl"] * 365 if i["tvl"] else 0,
+                      partial=k != "24h" and i.get("vol_days", 30) < days[k])
+    w7, w30 = win["7d"], win["30d"]
+    return dict(lo=lo, hi=hi, in_range=inr, share=share, windows=win,
+                fee_day7=w7["fee_day"], fee_day30=w30["fee_day"], apr7=w7["apr"], apr30=w30["apr"])
 
 def hourly(i):
     o = gt(i["pool"] + "/ohlcv/hour", ttl=900, limit=1000, token=i["stock"])["attributes"]["ohlcv_list"]

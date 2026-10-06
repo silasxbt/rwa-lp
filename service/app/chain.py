@@ -48,10 +48,13 @@ def cached(key, ttl, fn):
 
 def gt(path, ttl=300, **params):
     def fetch():
-        for _ in range(6):
-            r = _s.get(GT + path, params=params, timeout=20).json()
-            if "data" in r: return r["data"]
-            time.sleep(10)  # 限流 30 次/分钟
+        for n in range(6):
+            try:
+                r = _s.get(GT + path, params=params, timeout=20).json()
+                if "data" in r: return r["data"]
+                time.sleep(10)  # 限流 30 次/分钟
+            except (requests.RequestException, ValueError):
+                time.sleep(1 + n)  # 网络抖动 / TLS 中断，短暂重试
         raise RuntimeError("GeckoTerminal 暂时不可用，请稍后再试")
     return cached(("gt", path, tuple(sorted(params.items()))), ttl, fetch)
 

@@ -67,7 +67,8 @@ def handle(update):
             return send(chat, f"查询失败：{ex}")
         flags = "\n".join(("✅ " if f["ok"] else "❌ " if f["ok"] is False else "ℹ️ ") + f["text"] for f in i["flags"])
         send(chat, f"{i['name']}  ${i['price']:,.2f}\n{flags}\n\n$1000 @ ${lo:,.2f} – ${hi:,.2f}\n"
-                   f"份额 {e['share']*100:.3f}%  手续费/天 ${e['fee_day7']:.2f}（7日）/ ${e['fee_day30']:.2f}（30日）\n"
-                   f"年化 {e['apr7']*100:.0f}% / {e['apr30']*100:.0f}%（未扣无常损失）")
+                   f"份额 {e['share']*100:.3f}%\n"
+                   + "\n".join(f"{k:>3}  ${w['fee_day']:.2f}/天  年化 {w['apr']*100:.0f}%" for k, w in e["windows"].items())
+                   + "\n（未扣无常损失）")
     else:
         send(chat, HELP)
