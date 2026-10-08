@@ -127,8 +127,11 @@
   .dot { width:7px; height:7px; border-radius:50%; flex:none; transform:translateY(-1px); }
   .d-ok { background:var(--in); } .d-bad { background:var(--risk); } .d-info { background:var(--out); }
 
-  .posbox { display:grid; grid-template-columns:220px 1fr; gap:0; border:1px solid var(--rule); border-radius:4px; background:var(--deck); margin:12px 0; }
-  .grade { padding:12px 14px; border-right:1px solid var(--rule); }
+  .duo { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:12px; margin:14px 0 12px; align-items:stretch; }
+  .duo .rail { margin:0 0 6px; }
+  #posbox { display:flex; }
+  .posbox { display:flex; flex-direction:column; flex:1; border:1px solid var(--rule); border-radius:4px; background:var(--deck); min-width:0; }
+  .grade { padding:12px 14px 8px; border-bottom:1px solid var(--rule); }
   .grade .lv { font:600 22px var(--sans); letter-spacing:-.01em; }
   .grade .lv.g0 { color:var(--in); } .grade .lv.g1 { color:var(--out); } .grade .lv.g2 { color:var(--risk); }
   .grade ul { margin:6px 0 0; padding:0 0 0 14px; color:var(--dim); font-size:11px; }
@@ -141,7 +144,8 @@
   .track .pin.r span { left:auto; right:6px; }
   .track .pin.b span { top:26px; }
   .ends { display:flex; justify-content:space-between; font:11px var(--mono); color:var(--dim); }
-  .quote { display:flex; gap:18px; flex-wrap:wrap; font-size:12px; color:var(--dim); margin-top:6px; }
+  .ends-mid { font:11px var(--mono); color:var(--dim); margin-top:4px; }
+  .quote { display:flex; gap:4px 12px; flex-wrap:wrap; font-size:11px; color:var(--dim); margin-top:8px; padding-top:8px; border-top:1px dashed var(--rule); }
   .quote b { color:var(--text); font:500 12px var(--mono); }
   section { margin-top:26px; }
   section > h2, #btout h2 { font-size:13px; font-weight:600; margin:0 0 8px; display:flex; gap:10px; align-items:baseline; }
@@ -166,6 +170,7 @@
   .bot code { color:var(--ice); }
   footer { color:var(--dim); font-size:11px; margin-top:28px; max-width:78ch; }
 
+  @media (max-width:1180px) { .duo { grid-template-columns:minmax(0,1fr) 280px; } }
   @media (max-width:1180px) { .checks { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width:860px) {
     .shell { grid-template-columns:1fr; }
@@ -175,7 +180,7 @@
     .stats div:nth-child(odd) { border-left:0; }
     .stats div { border-top:1px solid var(--rule); }
     .checks { grid-template-columns:1fr; }
-    .posbox { grid-template-columns:1fr; } .grade { border-right:0; border-bottom:1px solid var(--rule); }
+    .duo { grid-template-columns:1fr; }
     header nav a:not(:first-child) { display:none; }
   }
   @media (max-width:860px) { input[type=text], input[type=number], select { font-size:16px; } }
@@ -335,9 +340,10 @@ async function check() {
     $("out").innerHTML = `<div class="enter">
       <div class="head"><h1>${p.name}</h1><span class="price">${usd(p.price)}</span>
         <a class="addr num" href="https://bscscan.com/address/${p.pool}" target="_blank" rel="noopener">${short(p.pool)}</a>${state}</div>
-      <div class="rail">${railSVG() || '<p class="dim">深度数据暂不可用</p>'}</div>
-      <div class="legend"><span><b style="background:var(--rule2)"></b>其他 LP 的活跃流动性</span><span><b style="background:var(--ice)"></b>落在你区间内的部分</span><span><b style="background:var(--in)"></b>当前价</span></div>
-      <div id="posbox"></div>
+      <div class="duo"><div class="duo-l">
+        <div class="rail">${railSVG() || '<p class="dim">深度数据暂不可用</p>'}</div>
+        <div class="legend"><span><b style="background:var(--rule2)"></b>其他 LP 的活跃流动性</span><span><b style="background:var(--ice)"></b>落在你区间内的部分</span><span><b style="background:var(--in)"></b>当前价</span></div>
+      </div><div id="posbox"><div class="posbox"><div class="grade"><span class="dim" style="font-size:11px">区间位置评级</span><div class="lv dim">…</div></div></div></div></div>
       <div class="win-bar"><span class="dim">收益口径</span><div class="seg" role="tablist" id="win">${WIN.map(k =>
         `<button type="button" role="tab" data-w="${k}" aria-selected="${k === winKey}">${k}</button>`).join("")}</div>
         <span class="dim" id="winnote"></span></div>
@@ -407,7 +413,8 @@ async function position(address, seq) {
         <ul>${g.reasons.map(t => `<li>${t}</li>`).join("")}</ul></div>
       <div class="gauge">
         <div class="track"><div class="zone"></div>${pin(g.pos, "var(--ice)", "链上 " + usd(r.price))}${f ? pin(g.fair_pos, "var(--text)", "真实 " + usd(f.fair), "b") : ""}</div>
-        <div class="ends"><span>下沿 ${usd(r.lo)}</span><span>位置 ${pct(g.pos, 0)} · 离边界 ${pct(g.edge, 1)} · 日波动 ${pct(g.sigma_day, 1)}</span><span>上沿 ${usd(r.hi)}</span></div>
+        <div class="ends"><span>下沿 ${usd(r.lo)}</span><span>上沿 ${usd(r.hi)}</span></div>
+        <div class="ends-mid">位置 ${pct(g.pos, 0)} · 离边界 ${pct(g.edge, 1)} · 日波动 ${pct(g.sigma_day, 1)}</div>
         <div class="quote">${fairLine}<span>持仓 <b>${r.holdings.stock.toFixed(4)}</b> 股 + <b>${usd(r.holdings.stable)}</b></span></div>
       </div></div>`;
     const name = {up: "涨破上沿后上移", down: "跌破下沿后下移", recenter: "现在按当前价重新居中"};
