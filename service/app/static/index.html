@@ -92,6 +92,14 @@
   .rail .axis { position:absolute; left:10px; right:10px; bottom:4px; height:14px; font:11px var(--mono); color:var(--dim); }
   .rail .axis span { position:absolute; transform:translateX(-50%); white-space:nowrap; }
   .rail .axis span.l { transform:none; } .rail .axis span.r { transform:translateX(-100%); }
+  .rail { cursor:crosshair; }
+  .rail .hair { position:absolute; top:10px; bottom:22px; width:1px; background:var(--text); opacity:.55; pointer-events:none; display:none; }
+  .rail .tip { position:absolute; top:12px; pointer-events:none; display:none; z-index:2; background:rgba(12,18,27,.94); border:1px solid var(--rule2);
+               border-radius:4px; padding:6px 9px; font:11px/1.5 var(--mono); white-space:nowrap; box-shadow:0 4px 16px rgba(0,0,0,.35); }
+  .rail .tip b { font-weight:500; color:var(--text); }
+  .rail .tip span { color:var(--dim); }
+  .rail:hover .hair, .rail:hover .tip { display:block; }
+  @media (hover:none) { .rail .hair, .rail .tip { display:none !important; } }
   .legend { display:flex; gap:14px; color:var(--dim); font-size:11px; }
   .legend b { display:inline-block; width:8px; height:8px; margin-right:5px; vertical-align:0; border-radius:1px; }
 
@@ -323,6 +331,34 @@ function railSVG() {
 }
 function drawRail() { const r = document.querySelector(".rail"); if (r) r.innerHTML = railSVG(); }
 ["lo", "hi"].forEach(id => $(id).addEventListener("input", drawRail));
+
+/* 深度图悬停：光标价位相对区间中点的涨跌、在区间内的位置（下沿 −50%，上沿 +50%） */
+function railHover(e) {
+  const rail = e.currentTarget, svg = rail.querySelector("svg");
+  if (!svg || !depthData) return;
+  const box = svg.getBoundingClientRect(), f = (e.clientX - box.left) / box.width;
+  if (f < 0 || f > 1) return;
+  const b = depthData.bins, lo0 = b[0].p0, hi0 = b[b.length - 1].p1;
+  const price = Math.exp(Math.log(lo0) + f * (Math.log(hi0) - Math.log(lo0)));
+  const lo = +$("lo").value, hi = +$("hi").value, has = lo > 0 && hi > lo;
+  let hair = rail.querySelector(".hair"), tip = rail.querySelector(".tip");
+  if (!hair) { rail.insertAdjacentHTML("beforeend", '<div class="hair"></div><div class="tip" role="status"></div>'); hair = rail.querySelector(".hair"); tip = rail.querySelector(".tip"); }
+  const x = box.left - rail.getBoundingClientRect().left + f * box.width;
+  hair.style.left = x + "px";
+  let html = `<b>${usd(price)}</b> <span>当前 ${usd(depthData.price)} ${signed(price / depthData.price - 1, v => pct(v, 2))}</span>`;
+  if (has) {
+    const mid = Math.sqrt(lo * hi), raw = (Math.log(price) - Math.log(mid)) / (Math.log(hi) - Math.log(lo));
+    const pos = Math.max(-0.5, Math.min(0.5, raw)), out = Math.abs(raw) > 0.5;
+    html += `<br><span>较区间中点 ${usd(mid)}</span> <b class="${price >= mid ? "pos" : "neg"}">${signed(price / mid - 1, v => pct(v, 2))}</b>`
+          + `<br><span>区间位置</span> <b class="${out ? "neg" : ""}">${signed(pos, v => pct(v, 1))}</b>`
+          + `<span>${out ? (raw > 0 ? "（已出上沿）" : "（已出下沿）") : "（下沿 −50% · 上沿 +50%）"}</span>`;
+  }
+  tip.innerHTML = html;
+  const w = tip.offsetWidth, rw = rail.clientWidth;
+  tip.style.left = Math.min(Math.max(x + 12, 4), rw - w - 4) + "px";
+  if (x + 12 + w > rw - 4) tip.style.left = Math.max(x - w - 12, 4) + "px";
+}
+document.addEventListener("mousemove", e => { const r = e.target.closest?.(".rail"); if (r) railHover({currentTarget: r, clientX: e.clientX}); });
 
 async function check() {
   const btn = $("go"), seq = ++checkSeq; busy(btn, true, "分析中…"); loading($("out"), true);
