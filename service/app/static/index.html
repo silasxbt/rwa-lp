@@ -135,12 +135,19 @@
   .dot { width:7px; height:7px; border-radius:50%; flex:none; transform:translateY(-1px); }
   .d-ok { background:var(--in); } .d-bad { background:var(--risk); } .d-info { background:var(--out); }
 
-  .duo { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:12px; margin:14px 0 12px; align-items:stretch; }
-  .duo .rail { margin:0 0 6px; }
-  #posbox { display:flex; }
-  .posbox { display:flex; flex-direction:column; flex:1; border:1px solid var(--rule); border-radius:4px; background:var(--deck); min-width:0; }
-  .grade { padding:12px 14px 8px; border-bottom:1px solid var(--rule); }
-  .grade .lv { font:600 22px var(--sans); letter-spacing:-.01em; }
+  .duo { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:12px; margin:14px 0 6px; align-items:stretch; }
+  .duo .rail { margin:0; }
+  #posbox { position:relative; }
+  .posbox { position:absolute; inset:0; display:flex; flex-direction:column; border:1px solid var(--rule); border-radius:4px; background:var(--deck); min-width:0; overflow:auto; }
+  .posbox .gauge { padding:8px 14px; }
+  .grade { display:flex; align-items:baseline; justify-content:space-between; padding:10px 12px 4px; }
+  .grade > .dim { font-size:11px; }
+  .posbox .why { margin:0; padding:0 12px 8px; color:var(--dim); font-size:11px; line-height:1.45; border-bottom:1px solid var(--rule); }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:3px 10px; margin:0; padding:8px 12px; font-size:12px; }
+  .kv dt { color:var(--dim); font-size:11px; }
+  .kv dd { margin:0; font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .kv dd .dim { font-size:11px; }
+  .grade .lv { font:600 18px var(--sans); letter-spacing:-.01em; }
   .grade .lv.g0 { color:var(--in); } .grade .lv.g1 { color:var(--out); } .grade .lv.g2 { color:var(--risk); }
   .grade ul { margin:6px 0 0; padding:0 0 0 14px; color:var(--dim); font-size:11px; }
   .gauge { padding:12px 16px 8px; }
@@ -188,7 +195,7 @@
     .stats div:nth-child(odd) { border-left:0; }
     .stats div { border-top:1px solid var(--rule); }
     .checks { grid-template-columns:1fr; }
-    .duo { grid-template-columns:1fr; }
+    .duo { grid-template-columns:1fr; } .posbox { position:static; } #posbox { order:2; }
     header nav a:not(:first-child) { display:none; }
   }
   @media (max-width:860px) { input[type=text], input[type=number], select { font-size:16px; } }
@@ -378,8 +385,8 @@ async function check() {
         <a class="addr num" href="https://bscscan.com/address/${p.pool}" target="_blank" rel="noopener">${short(p.pool)}</a>${state}</div>
       <div class="duo"><div class="duo-l">
         <div class="rail">${railSVG() || '<p class="dim">深度数据暂不可用</p>'}</div>
-        <div class="legend"><span><b style="background:var(--rule2)"></b>其他 LP 的活跃流动性</span><span><b style="background:var(--ice)"></b>落在你区间内的部分</span><span><b style="background:var(--in)"></b>当前价</span></div>
       </div><div id="posbox"><div class="posbox"><div class="grade"><span class="dim" style="font-size:11px">区间位置评级</span><div class="lv dim">…</div></div></div></div></div>
+      <div class="legend"><span><b style="background:var(--rule2)"></b>其他 LP 的活跃流动性</span><span><b style="background:var(--ice)"></b>落在你区间内的部分</span><span><b style="background:var(--in)"></b>当前价</span></div>
       <div class="win-bar"><span class="dim">收益口径</span><div class="seg" role="tablist" id="win">${WIN.map(k =>
         `<button type="button" role="tab" data-w="${k}" aria-selected="${k === winKey}">${k}</button>`).join("")}</div>
         <span class="dim" id="winnote"></span></div>
@@ -442,17 +449,16 @@ async function position(address, seq) {
     const at = v => Math.min(100, Math.max(0, v * 100)).toFixed(2);
     const pin = (v, color, label, b = "") => v == null ? "" :
       `<div class="pin ${v > .7 ? "r" : ""} ${b}" style="left:${at(v)}%;background:${color}"><span style="color:${color}">${label}</span></div>`;
-    const fairLine = f ? `<span>${f.ticker} ${f.state} <b>${usd(f.last)}</b></span><span>折算 ×${f.multiplier.toFixed(4)} <b>${usd(f.fair)}</b></span>
-        <span>链上${r.price >= f.fair ? "溢价" : "折价"} <b>${pct(Math.abs(r.price / f.fair - 1), 2)}</b></span>` : `<span>未取到真实股价</span>`;
+    const prem = f ? r.price / f.fair - 1 : null;
     $("posbox").innerHTML = `<div class="posbox enter">
-      <div class="grade"><span class="dim" style="font-size:11px">区间位置评级</span><div class="lv g${g.code}">${g.level}</div>
-        <ul>${g.reasons.map(t => `<li>${t}</li>`).join("")}</ul></div>
-      <div class="gauge">
-        <div class="track"><div class="zone"></div>${pin(g.pos, "var(--ice)", "链上 " + usd(r.price))}${f ? pin(g.fair_pos, "var(--text)", "真实 " + usd(f.fair), "b") : ""}</div>
-        <div class="ends"><span>下沿 ${usd(r.lo)}</span><span>上沿 ${usd(r.hi)}</span></div>
-        <div class="ends-mid">位置 ${pct(g.pos, 0)} · 离边界 ${pct(g.edge, 1)} · 日波动 ${pct(g.sigma_day, 1)}</div>
-        <div class="quote">${fairLine}<span>持仓 <b>${r.holdings.stock.toFixed(4)}</b> 股 + <b>${usd(r.holdings.stable)}</b></span></div>
-      </div></div>`;
+      <div class="grade"><span class="dim">区间位置评级</span><b class="lv g${g.code}">${g.level}</b></div>
+      <p class="why">${g.reasons.join("；")}</p>
+      <dl class="kv">
+        <dt>区间</dt><dd>${usd(r.lo)} – ${usd(r.hi)}</dd>
+        <dt>位置</dt><dd>${pct(g.pos, 0)} <span class="dim">· 离边界 ${pct(g.edge, 1)} · 日波动 ${pct(g.sigma_day, 1)}</span></dd>
+        ${f ? `<dt>真实价</dt><dd>${usd(f.fair)} <span class="dim">· ${f.ticker} ${f.state} · 链上${prem >= 0 ? "溢价" : "折价"} ${pct(Math.abs(prem), 2)}</span></dd>` : `<dt>真实价</dt><dd class="dim">未取到</dd>`}
+        <dt>持仓</dt><dd>${r.holdings.stock.toFixed(4)} 股 + ${usd(r.holdings.stable)}</dd>
+      </dl></div>`;
     const name = {up: "涨破上沿后上移", down: "跌破下沿后下移", recenter: "现在按当前价重新居中"};
     const rows = ["up", "down", "recenter"].map(k => { const x = r.rebalance[k]; return `<tr><td>${name[k]}</td>
       <td>${usd(x.at)}</td><td>${usd(x.lo)} – ${usd(x.hi)}</td><td>${usd(x.swap, 0)}</td>
