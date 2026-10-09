@@ -462,15 +462,15 @@ async function position(address, seq) {
     const name = {up: "涨破上沿后上移", down: "跌破下沿后下移", recenter: "现在按当前价重新居中"};
     const rows = ["up", "down", "recenter"].map(k => { const x = r.rebalance[k]; return `<tr><td>${name[k]}</td>
       <td>${usd(x.at)}</td><td>${usd(x.lo)} – ${usd(x.hi)}</td><td>${usd(x.swap, 0)}</td>
-      <td class="sep">${usd(x.swap_fee)}</td><td>${usd(x.impact)}</td><td>${usd(x.gas, 3)}</td><td class="bad">${usd(x.cost)}</td><td>${pct(x.cost_pct, 2)}</td>
+      <td class="sep">${usd(x.swap_fee)}</td><td>${usd(x.impact)}</td><td title="${x.side}，按 ${pct(x.spread_pct, 2)} 计">${usd(x.spread)}</td><td>${usd(x.gas, 3)}</td><td class="bad">${usd(x.cost)}</td><td>${pct(x.cost_pct, 2)}</td>
       <td class="sep">${usd(x.fee_day)}</td><td>${pct(x.apr24, 0)}</td><td>${x.payback_days == null ? "—" : x.payback_days < 1 ? (x.payback_days * 24).toFixed(0) + " 小时" : x.payback_days.toFixed(1) + " 天"}</td></tr>`; }).join("");
     $("rbmeta").textContent = `平移 ${pct(r.shift, 0)}，gas ${r.gas.gwei.toFixed(2)} gwei，BNB ${usd(r.gas.bnb)}`;
     $("rebal").className = "";
     $("rebal").innerHTML = `<div class="scroll enter"><table>
-      <tr><th></th><th class="grp" colspan="3">调仓动作</th><th class="grp" colspan="5">一次性成本</th><th class="grp" colspan="3">调仓后（按近 24h 成交量）</th></tr>
-      <tr><th>情形</th><th>触发价</th><th>新区间</th><th>需换仓</th><th class="sep">swap 手续费</th><th>价格冲击</th><th>gas</th><th>合计</th><th>占本金</th>
+      <tr><th></th><th class="grp" colspan="3">调仓动作</th><th class="grp" colspan="6">一次性成本</th><th class="grp" colspan="3">调仓后（保守估算，7 日成交量）</th></tr>
+      <tr><th>情形</th><th>触发价</th><th>新区间</th><th>需换仓</th><th class="sep">swap 手续费</th><th>价格冲击</th><th>价差</th><th>gas</th><th>合计</th><th>占本金</th>
           <th class="sep">手续费/天</th><th>年化</th><th>回本时间</th></tr>${rows}</table></div>
-      <p class="note">换仓金额按出界时仓位已全部变成单一资产、要换回新区间所需配比计算；价格冲击用目标价位的链上活跃流动性估算；gas 用链上实时 gasPrice × 约 85 万 gas × Chainlink BNB 价格。调仓后年化假设近 24h 成交量不变，出界后边缘价位的竞争流动性通常更薄，所以数字偏高。周末和休市时段 24h 成交量偏低。</p>`;
+      <p class="note">换仓金额按出界时仓位已全部变成单一资产、要换回新区间所需配比计算。价格冲击按目标价位的链上活跃流动性沿 V3 曲线估算；价差 = 链上价相对真实股价的偏离（只在买贵或卖便宜的方向计）+ 0.1% 底线，休市或取不到真实股价时按 0.2%；gas 用链上实时 gasPrice × 约 85 万 gas × Chainlink BNB 价格。调仓后收益是保守口径：假设其他 LP 会跟着价格移动、你的份额与现在相同，成交量取 7 日均值。没有计入出区间时已经形成的无常损失。</p>`;
   } catch (err) {
     $("posbox").innerHTML = `<p class="err">区间评估失败：${err.message}</p>`;
     $("rebal").innerHTML = "";

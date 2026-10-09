@@ -26,22 +26,32 @@ def competitor_L(i, price):
         pass
     return i["Lh"]
 
-def fee_rate(i, lo, hi, value, price, vol):
+def fee_rate(i, lo, hi, value, price, vol, comp=None):
+    """comp：竞争流动性。默认取该价位的链上值；调仓后估算用当前价位的值（假设其他 LP 会跟着价格移动）。"""
     if not lo < price < hi or value <= 0: return 0, 0
     uL = liq(value, price, lo, hi)
-    share = uL / (competitor_L(i, price) + uL)
+    share = uL / ((comp if comp is not None else competitor_L(i, price)) + uL)
     return share, vol * i["lp_fee"] * share
 
-def rebalance(i, value, x, y, price, lo, hi, gas):
-    """把当前持仓（x 股 + y 美元，按 price 计价）换成新区间 [lo,hi] 需要的配比，返回成本和新收益。"""
+PREMIUM_FLOOR = 0.002  # 价差成本下限：拿不到真实股价、或休市时，按 0.2% 计
+
+def rebalance(i, value, x, y, price, lo, hi, gas, premium=None, comp_now=None):
+    """把当前持仓（x 股 + y 美元，按 price 计价）换成新区间 [lo,hi] 需要的配比，返回成本和调仓后收益。
+    成本 = swap 手续费 + 价格冲击 + 价差（链上价偏离真实股价的那部分，只在买贵 / 卖便宜的方向计） + gas。
+    调仓后收益用保守口径：竞争流动性取当前价位的值（其他 LP 会跟着价格移动），成交量取 7 日均值。"""
     need_x, _ = amounts(liq(value, price, lo, hi), price, lo, hi)
+    buy = need_x > x
     swap = abs(need_x - x) * price
     lc = competitor_L(i, price)
     fee = swap * i["fee"] / 1e6
     impact = swap * swap / (lc * math.sqrt(price)) if lc else 0
-    cost = fee + impact + gas
-    share, day = fee_rate(i, lo, hi, value - cost, price, i["vol24"])
-    return dict(lo=lo, hi=hi, at=price, value=value, swap=swap, swap_fee=fee, impact=impact, gas=gas, cost=cost,
+    if premium is None: spread_pct = PREMIUM_FLOOR
+    else: spread_pct = max(premium if buy else -premium, 0) + PREMIUM_FLOOR / 2
+    spread = swap * spread_pct
+    cost = fee + impact + spread + gas
+    share, day = fee_rate(i, lo, hi, value - cost, price, i["vol7"], comp_now)
+    return dict(lo=lo, hi=hi, at=price, value=value, swap=swap, side="买入股票" if buy else "卖出股票",
+                swap_fee=fee, impact=impact, spread=spread, spread_pct=spread_pct, gas=gas, cost=cost,
                 cost_pct=cost / value if value else 0, share=share, fee_day=day,
                 apr24=day * 365 / value if value else 0, payback_days=cost / day if day else None)
 
@@ -108,12 +118,14 @@ def evaluate(pool, lo, hi, capital, shift=0.5):
     w = math.sqrt(hi / lo)
     # 三种情形：价格打到上沿后上移、打到下沿后下移、现在按当前价重新居中
     xu, yu = amounts(uL, hi, lo, hi); xd, yd = amounts(uL, lo, lo, hi)
-    scen = {
-        "up": rebalance(i, xu * hi + yu, xu, yu, hi, lo * step, hi * step, gas["usd"]),
-        "down": rebalance(i, xd * lo + yd, xd, yd, lo, lo / step, hi / step, gas["usd"]),
-        "recenter": rebalance(i, capital, x, y, p, p / w, p * w, gas["usd"]),
-    }
     fair = fair_price(i)
+    prem = (p / fair["fair"] - 1) if fair else None
+    comp = competitor_L(i, p)
+    scen = {
+        "up": rebalance(i, xu * hi + yu, xu, yu, hi, lo * step, hi * step, gas["usd"], prem, comp),
+        "down": rebalance(i, xd * lo + yd, xd, yd, lo, lo / step, hi / step, gas["usd"], prem, comp),
+        "recenter": rebalance(i, capital, x, y, p, p / w, p * w, gas["usd"], prem, comp),
+    }
     return dict(pool=i["pool"], name=i["name"], price=p, lo=lo, hi=hi, capital=capital, shift=shift,
                 vol24=i["vol24"], share24=share, fee_day24=day, apr24=day * 365 / capital,
                 holdings={"stock": x, "stock_usd": x * p, "stable": y}, gas=gas,
