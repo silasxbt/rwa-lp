@@ -9,7 +9,7 @@ MAX_WATCHES = 10
 
 HELP = """rwalp 机器人：bStocks 代币化美股 LP 风控
 
-/watch <池子地址> <下沿> <上沿>  订阅区间提醒（美元价）
+/watch <池子地址> <下沿> <上沿>  订阅区间提醒（稳定币池按美元，股票/BNB 池按 BNB）
 /list  查看我的订阅
 /unwatch <编号>  取消订阅
 /check <池子地址> [下沿 上沿]  池子体检 + 手续费估算
@@ -55,9 +55,11 @@ def handle(update):
             return send(chat, f"添加失败：{e}")
         store.add_chat(chat)
         z = zone(lo, hi, i["price"])
-        wid = store.add_watch(chat, i["pool"], i["name"], lo, hi, z)
+        wid = store.add_watch(chat, i["pool"], i["name"], lo, hi, z, i["quote_sym"])
         warn = "" if i["dex"] and i["canonical"] else "\n⚠️ 这不是官方 factory 创建的池子，注意仿盘风险。"
-        send(chat, f"已订阅 {wid[:6]}：{i['name']}\n当前 ${i['price']:,.2f}，区间 ${lo:,.2f} – ${hi:,.2f}（{z}）{warn}")
+        from .position import fmt_px
+        unit = "（股票/BNB 池：上下沿按 BNB 填）" if i["quote_kind"] == "bnb" else ""
+        send(chat, f"已订阅 {wid[:6]}：{i['name']}\n当前 {fmt_px(i, i['price'])}，区间 {fmt_px(i, lo)} – {fmt_px(i, hi)}（{z}）{unit}{warn}")
     elif cmd == "/check" and len(args) in (2, 4) and POOL_RE.match(args[1]):
         try:
             i = pool_info(args[1])
@@ -66,7 +68,8 @@ def handle(update):
         except Exception as ex:
             return send(chat, f"查询失败：{ex}")
         flags = "\n".join(("✅ " if f["ok"] else "❌ " if f["ok"] is False else "ℹ️ ") + f["text"] for f in i["flags"])
-        send(chat, f"{i['name']}  ${i['price']:,.2f}\n{flags}\n\n$1000 @ ${lo:,.2f} – ${hi:,.2f}\n"
+        from .position import fmt_px
+        send(chat, f"{i['name']}  {fmt_px(i, i['price'])}（${i['price_usd']:,.2f}）\n{flags}\n\n$1000 @ {fmt_px(i, lo)} – {fmt_px(i, hi)}\n"
                    f"份额 {e['share']*100:.3f}%\n"
                    + "\n".join(f"{k:>3}  ${w['fee_day']:.2f}/天  年化 {w['apr']*100:.0f}%" for k, w in e["windows"].items())
                    + "\n（未扣无常损失）")

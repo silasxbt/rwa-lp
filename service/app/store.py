@@ -16,9 +16,9 @@ def remove_chat(chat_id):
 def chats():
     return [d.to_dict()["chat_id"] for d in db().collection("chats").stream()]
 
-def add_watch(chat_id, pool, name, lo, hi, zone):
+def add_watch(chat_id, pool, name, lo, hi, zone, quote="USD"):
     ref = db().collection("watches").document()
-    ref.set({"chat_id": chat_id, "pool": pool, "name": name, "lo": lo, "hi": hi, "zone": zone,
+    ref.set({"chat_id": chat_id, "pool": pool, "name": name, "lo": lo, "hi": hi, "zone": zone, "quote": quote,
              "created": firestore.SERVER_TIMESTAMP})
     return ref.id
 

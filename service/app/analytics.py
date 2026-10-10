@@ -7,6 +7,22 @@ FACTORIES = {"0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865": "PancakeSwap V3",
              "0xdb1d10011ad0ff90774d0c6bb92e5c5c8b4461f7": "Uniswap V3 (BSC)"}
 STABLES = {"0x55d398326f99059ff775485246999027b3197955": "USDT",
            "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": "USDC"}
+WBNB = "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c"
+QUOTES = {**STABLES, WBNB: "BNB"}      # 计价币：稳定币按 1 美元，BNB 按 Chainlink 价格
+CHAINLINK_BNB = "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE"  # BNB/USD，8 位小数
+
+def bnb_usd():
+    return cached("bnb_usd", 60, lambda: int(call(CHAINLINK_BNB, "latestAnswer()"), 16) / 1e8)
+
+def quote_usd(q):
+    return 1.0 if q in STABLES else bnb_usd()
+
+def quote_of(t0, t1):
+    """返回 (计价币, 计价币是否 token1)。稳定币优先，其次 BNB；都不是返回 (None, None)。"""
+    for pool_set in (STABLES, {WBNB}):
+        if t1 in pool_set: return t1, True
+        if t0 in pool_set: return t0, False
+    return None, None
 BSTOCKS_BEACON = "0x156d6dce9a4f6139a3406f1f021f1a4880de93a3"
 BEACON_SLOT = "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50"
 GAS_USD = 0.1  # BSC 上撤池+swap+开仓三笔交易合计
@@ -23,17 +39,20 @@ def _static(pool):
     fee = int(call(pool, "fee()"), 16)
     canon = addr(call(f, "getPool(address,address,uint24)", pad(t0) + pad(t1) + hex(fee)[2:].zfill(64))) == pool
     d0, d1 = int(call(t0, "decimals()"), 16), int(call(t1, "decimals()"), 16)
-    stable_is_1 = t1 in STABLES
+    q, stable_is_1 = quote_of(t0, t1)
+    if q is None: stable_is_1 = True
     stock = t0 if stable_is_1 else t1
     beacon = addr(rpc("eth_getStorageAt", [stock, BEACON_SLOT, "latest"]))
     return dict(pool=pool, factory=f, dex=FACTORIES.get(f), canonical=canon, token0=t0, token1=t1,
                 symbol0=symbol(t0), symbol1=symbol(t1), d0=d0, d1=d1, fee=fee, stock=stock,
-                stable=t1 if stable_is_1 else t0, stable_is_1=stable_is_1, bstocks=beacon == BSTOCKS_BEACON)
+                stable=q or (t1 if stable_is_1 else t0), stable_is_1=stable_is_1, bstocks=beacon == BSTOCKS_BEACON,
+                quote_sym=QUOTES.get(q), quote_kind="bnb" if q == WBNB else "usd")
 
 def pool_info(pool):
     pool = pool.lower()
     s = cached(("static", pool), 86400, lambda: _static(pool))
-    if s["stable"] not in STABLES: raise ValueError("只支持股票/USDT 或 股票/USDC 的 V3 池子")
+    if s["stable"] not in QUOTES or s["stock"] in QUOTES: raise ValueError("只支持股票/USDT、股票/USDC 或 股票/BNB 的 V3 池子")
+    s.setdefault("quote_sym", QUOTES[s["stable"]]); s.setdefault("quote_kind", "bnb" if s["stable"] == WBNB else "usd")
     slot0 = words(call(pool, "slot0()"))
     P = (slot0[0] / 2**96) ** 2
     Lraw = int(call(pool, "liquidity()"), 16)
@@ -48,14 +67,20 @@ def pool_info(pool):
     v30 = st.mean(vols[-30:]) if vols else 0
     v3 = st.mean(vols[-3:]) if vols else 0
     v14 = st.mean(vols[-14:]) if vols else 0
-    closes = [x[4] for x in o]
+    qusd = quote_usd(s["stable"])
+    if s["quote_kind"] == "bnb":  # 股票/BNB 池：波动率按比值（BNB 计价）算
+        oq = sorted(gt(pool + "/ohlcv/day", limit=31, token=s["stock"], currency="token")["attributes"]["ohlcv_list"])[:-1]
+        closes = [x[4] for x in oq]
+    else:
+        closes = [x[4] for x in o]
     rets = [math.log(closes[j] / closes[j - 1]) for j in range(1, len(closes)) if closes[j - 1] > 0]
     sigma_day = st.pstdev(rets) if len(rets) > 5 else 0.02
     v24 = float(a["volume_usd"]["h24"] or 0)
     tvl = float(a["reserve_in_usd"] or 0)
     created = a["pool_created_at"][:10]
     age = (dt.date.today() - dt.date.fromisoformat(created)).days
-    info = dict(s, name=a["name"], price=price, L=Lraw, Lh=Lraw / 10 ** ((s["d0"] + s["d1"]) / 2),
+    stock_sym = s["symbol0"] if s["stable_is_1"] else s["symbol1"]
+    info = dict(s, name=f"{stock_sym.upper()} / {s['quote_sym']} {s['fee'] / 1e4:g}%", stock_sym=stock_sym.upper(), price=price, qusd=qusd, price_usd=price * qusd, L=Lraw, Lh=Lraw / 10 ** ((s["d0"] + s["d1"]) / 2),
                 protocol_cut=cut, lp_fee=s["fee"] / 1e6 * (1 - cut), tvl=tvl, vol24=v24, vol3=v3, vol7=v7, vol14=v14, vol30=v30, vol_days=len(vols), sigma_day=sigma_day,
                 created=created, age_days=age)
     info["flags"] = quality_flags(info)
@@ -92,7 +117,7 @@ def estimate(i, lo, hi, capital):
     inr = lo < p < hi
     share = 0.0
     if inr:
-        uL = liq(capital, p, lo, hi)
+        uL = liq(capital / i.get("qusd", 1), p, lo, hi)   # 本金是美元，流动性按计价币算
         share = uL / (i["Lh"] + uL)
     days = {"24h": 1, "3d": 3, "7d": 7, "14d": 14, "30d": 30}
     win = {}
@@ -105,8 +130,12 @@ def estimate(i, lo, hi, capital):
                 fee_day7=w7["fee_day"], fee_day30=w30["fee_day"], apr7=w7["apr"], apr30=w30["apr"])
 
 def hourly(i):
-    o = gt(i["pool"] + "/ohlcv/hour", ttl=900, limit=1000, token=i["stock"])["attributes"]["ohlcv_list"]
-    return sorted(o)
+    """小时 K 线：价格按计价币，成交量也换算成计价币（稳定币池即美元）。"""
+    o = sorted(gt(i["pool"] + "/ohlcv/hour", ttl=900, limit=1000, token=i["stock"])["attributes"]["ohlcv_list"])
+    if i.get("quote_kind") != "bnb": return o
+    oq = sorted(gt(i["pool"] + "/ohlcv/hour", ttl=900, limit=1000, token=i["stock"], currency="token")["attributes"]["ohlcv_list"])
+    usd = {x[0]: x for x in o}
+    return [[x[0], x[1], x[2], x[3], x[4], usd[x[0]][5] * x[4] / usd[x[0]][4]] for x in oq if x[0] in usd and x[4] and usd[x[0]][4]]
 
 def us_open(ts):
     t = dt.datetime.fromtimestamp(ts, NY)
@@ -157,7 +186,7 @@ def real_hourly(i, o):
     first = next((v for v in out if v), None)
     return [v or first for v in out] if first else None
 
-def simulate(o, lc, fee_tier, lp_fee, lo, hi, capital, rebalance, shift=0.5, market_hours=True, hedge=None, real=None):
+def simulate(o, lc, fee_tier, lp_fee, lo, hi, capital, rebalance, shift=0.5, market_hours=True, hedge=None, real=None, gas_cost=GAS_USD):
     """整段样本模拟。rebalance=True 时出区间按区间对数宽度的 shift 比例朝出界方向平移，直到价格回到区间内。
     hedge 不为空时做空 LP 中的股票数量（delta 对冲）：对冲腿按真实股价 real 计盈亏，目标数量按真实股价下 LP 的持股量，
     偏离超过 threshold 时调整。链上价相对真实价的噪声会均值回归，不去对冲它。"""
@@ -184,8 +213,8 @@ def simulate(o, lc, fee_tier, lp_fee, lo, hi, capital, rebalance, shift=0.5, mar
             xt, _ = amounts(liq(val, p, a, b), p, a, b)
             sw = abs(xt - x) * p
             c_fee, c_imp = sw * fee_tier, sw * sw / (lc * math.sqrt(p))
-            swap_fee += c_fee; impact += c_imp; gas += GAS_USD; n += 1
-            L = liq(val - c_fee - c_imp - GAS_USD, p, a, b)
+            swap_fee += c_fee; impact += c_imp; gas += gas_cost; n += 1
+            L = liq(val - c_fee - c_imp - gas_cost, p, a, b)
         x, y = amounts(L, p, a, b)
         if hedge:
             tx, _ = amounts(L, rp, a, b)
@@ -214,18 +243,27 @@ def hedge_cfg(preset, threshold=0.05, **over):
     cfg.update({k: v for k, v in over.items() if v is not None})
     return cfg
 
+ABS_KEYS = ("fees", "il", "net", "worst", "swap_fee", "impact", "gas", "cost", "cost_per_rebalance",
+            "hedge_pnl", "hedge_carry", "hedge_trade_cost", "margin", "hedge_cost", "total_capital")
+
+def _to_usd(d, q):
+    return None if d is None else {k: (v * q if k in ABS_KEYS else v) for k, v in d.items()}
+
 def backtest(pool, ranges, capital=1000, days=7, shift=0.5, market_hours=True, hedge=None,
              sizes=(1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000)):
+    """内部按计价币模拟（股票/BNB 池即 BNB 本位），输出的金额统一换回美元。"""
     i = pool_info(pool)
+    if hedge and i["quote_kind"] == "bnb": raise ValueError("股票/BNB 池暂不支持对冲回测")
+    q = i["qusd"]; gas_q = GAS_USD / q
     o = hourly(i)
     if len(o) < days * 24 + 48: raise ValueError("历史数据不足")
     real = real_hourly(i, o) if hedge else None
-    sim = lambda lo, hi, cap, hg=None: simulate(o, i["Lh"], i["fee"] / 1e6, i["lp_fee"], lo, hi, cap, True, shift, market_hours, hg, real)
+    sim = lambda lo, hi, cap, hg=None: _to_usd(simulate(o, i["Lh"], i["fee"] / 1e6, i["lp_fee"], lo, hi, cap / q, True, shift, market_hours, hg, real, gas_q), q)
     out = []
     for lo, hi in ranges:
         out.append(dict(lo=lo, hi=hi,
-                        rolling=rolling(o, i["Lh"], i["lp_fee"], lo, hi, capital, days * 24),
-                        static=simulate(o, i["Lh"], i["fee"] / 1e6, i["lp_fee"], lo, hi, capital, False),
+                        rolling=_to_usd(rolling(o, i["Lh"], i["lp_fee"], lo, hi, capital / q, days * 24), q),
+                        static=_to_usd(simulate(o, i["Lh"], i["fee"] / 1e6, i["lp_fee"], lo, hi, capital / q, False, gas_cost=gas_q), q),
                         rebalance=sim(lo, hi, capital),
                         hedged=sim(lo, hi, capital, hedge) if hedge else None))
     scale = None
@@ -243,6 +281,7 @@ def backtest(pool, ranges, capital=1000, days=7, shift=0.5, market_hours=True, h
         scale = dict(lo=lo, hi=hi, rows=rows, breakeven=min(ok) if ok else None)
     return dict(pool=i["pool"], name=i["name"], hours=len(o), start=o[0][0], end=o[-1][0], lp_fee=i["lp_fee"],
                 fee_tier=i["fee"] / 1e6, capital=capital, days=days, shift=shift, market_hours=market_hours,
+                quote_sym=i["quote_sym"], quote_kind=i["quote_kind"],
                 hedge=hedge, hedge_price="真实股价（Yahoo 小时线）" if real else "链上价格（未取到真实股价）", results=out, scale=scale)
 
 def depth(pool, span=0.12, buckets=60):
@@ -278,4 +317,5 @@ def depth(pool, span=0.12, buckets=60):
         raw = mid / dd if i["stable_is_1"] else 1 / (mid * dd)
         x = math.floor(math.log(raw) / math.log(1.0001) / ts) * ts
         out.append({"p0": edges[j], "p1": edges[j + 1], "L": act.get(x, 0) / scale})
-    return {"price": i["price"], "Lh": i["Lh"], "lo": lo, "hi": hi, "bins": out, "tick_spacing": ts}
+    return {"price": i["price"], "Lh": i["Lh"], "lo": lo, "hi": hi, "bins": out, "tick_spacing": ts,
+            "quote_sym": i["quote_sym"], "quote_kind": i["quote_kind"], "qusd": i["qusd"]}

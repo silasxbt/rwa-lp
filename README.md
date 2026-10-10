@@ -41,6 +41,7 @@ uv run tools/range_backtest.py 0xe9b9998b2ec5430d2246c7f1f8d9f298c97d7365 --rang
 
 FastAPI 服务，部署在 GCP Cloud Run（asia-east1），网址 https://rwalp.silasxbt.com 。
 
+- 支持股票/USDT、股票/USDC、股票/BNB 三类池子；BNB 池价格按 BNB 显示，金额按 U
 - 网页：池子体检、手续费估算、区间回测（含出区间平移调仓的 swap 费 / 价格冲击 / gas 成本）、bStocks 治理状态
 - 回测可选 Delta 对冲（永续合约 / 券商融券），按真实股价小时线计对冲盈亏，给出持仓成本、交易成本和不同本金规模下是否划算
 - 区间评估：近 24h 年化、三种调仓情形的成本与回本时间、对照真实股价（Yahoo Finance）的区间位置评级

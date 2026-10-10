@@ -1,6 +1,6 @@
 """每分钟由 Cloud Scheduler 触发：bStocks 治理状态变化 → 广播；订阅池子出/近区间 → 通知订阅者。"""
 from .chain import rpc, batch, calls, cached, k, pad, addr, words
-from .analytics import BSTOCKS_BEACON, BEACON_SLOT, STABLES
+from .analytics import BSTOCKS_BEACON, BEACON_SLOT, STABLES, quote_of
 import time
 from . import store, telegram
 
@@ -13,6 +13,7 @@ KNOWN_POOLS = {
     "BABAB": "0xfd95cb1391999006eb91797a7c62acfe88b20292", "PDDB": "0xd0c2a4dc7c581db2660286660b703cf6883f29ba",
     "MSTRB": "0x692081209619735f25700557078ab084d3e5d007",
     "MSFTB": "0x5018b018ceb7645c927c5cf246786f89ebcbe7ea", "METAB": "0xc2151a561e928d16576d75ea88544543ac63d80b",
+    "BNCB": "0x320e8096e5e7a46e43446141a5b15d801fc596f5",   # 主池是 BNCB/BNB
 }
 NEAR = 0.01
 MAX_BLOCKS = 600  # 每次最多补扫的区块数
@@ -26,7 +27,8 @@ def pool_tokens(pools):
         out = {}
         for i, p in enumerate(pools):
             t0, t1 = addr(res[i]), addr(res[i + len(pools)])
-            out[p] = (t0, True) if t1 in STABLES else (t1, False)
+            q, q1 = quote_of(t0, t1)
+            out[p] = (t0, True) if (q1 if q else t1 in STABLES) else (t1, False)
         return out
     return cached(("tokens", tuple(pools)), 3600, f)
 
@@ -143,7 +145,8 @@ def tick():
             store.update_watch(w["id"], zone=z)
             if not (z == "区间内" and w.get("zone") in (None, "区间内")):
                 icon = "✅" if z == "区间内" else "⚠️"
-                telegram.send(w["chat_id"], f"{icon} {w['name']} ${p:,.2f} {z}\n区间 ${w['lo']:,.2f} – ${w['hi']:,.2f}\n{ZONE_TIP[z]}")
+                fp = lambda v: f"{v:.6g} BNB" if w.get("quote") == "BNB" else f"${v:,.2f}"
+                telegram.send(w["chat_id"], f"{icon} {w['name']} {fp(p)} {z}\n区间 {fp(w['lo'])} – {fp(w['hi'])}\n{ZONE_TIP[z]}")
                 sent += 1
     report["zone_alerts"] = sent
     report["rating_alerts"] = rating_alerts(ws)
@@ -171,10 +174,11 @@ def rating_alerts(ws):
             store.update_watch(w["id"], rating=r["level"], rating_at=now); continue
         if r["level"] != "危险" and now - w.get("rating_at", 0) < RATING_COOLDOWN: continue
         store.update_watch(w["id"], rating=r["level"], rating_at=now)
-        fp = f"\n真实股价折算 ${fair['fair']:,.2f}（{fair['ticker']} {fair['state']}）" if fair else ""
+        from .position import fmt_px
+        fp = f"\n真实股价折算 {fmt_px(i, fair['fair'])}（{fair['ticker']} ${fair['last']:,.2f} {fair['state']}）" if fair else ""
         telegram.send(w["chat_id"],
             f"{RATING_ICON[r['level']]} {w['name']} 评级 {prev} → {r['level']}\n"
-            f"链上 ${i['price']:,.2f}，区间 ${w['lo']:,.2f} – ${w['hi']:,.2f}，位置 {r['pos']*100:.0f}%，离边界 {r['edge']*100:.1f}%{fp}\n"
+            f"链上 {fmt_px(i, i['price'])}，区间 {fmt_px(i, w['lo'])} – {fmt_px(i, w['hi'])}，位置 {r['pos']*100:.0f}%，离边界 {r['edge']*100:.1f}%{fp}\n"
             + "\n".join("· " + t for t in r["reasons"]))
         sent += 1
     return sent

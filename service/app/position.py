@@ -2,12 +2,10 @@
 import math, time
 import requests
 from .chain import call, rpc, cached, words
-from .analytics import pool_info, depth, liq, amounts
-
-CHAINLINK_BNB = "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE"  # BNB/USD，8 位小数
+from .analytics import pool_info, depth, liq, amounts, CHAINLINK_BNB
 GAS_UNITS = 250_000 + 150_000 + 450_000  # 撤池+领取、swap、开新仓
 TICKERS = {"QQQB": "QQQ", "AAPLB": "AAPL", "GOOGLB": "GOOGL", "NVDAB": "NVDA", "BABAB": "BABA",
-           "PDDB": "PDD", "MSTRB": "MSTR", "TSLAB": "TSLA"}
+           "PDDB": "PDD", "MSTRB": "MSTR", "TSLAB": "TSLA", "BNCB": "BNC"}
 
 def gas_usd():
     def f():
@@ -36,7 +34,8 @@ def fee_rate(i, lo, hi, value, price, vol, comp=None):
 PREMIUM_FLOOR = 0.002  # 价差成本下限：拿不到真实股价、或休市时，按 0.2% 计
 
 def rebalance(i, value, x, y, price, lo, hi, gas, premium=None, comp_now=None):
-    """把当前持仓（x 股 + y 美元，按 price 计价）换成新区间 [lo,hi] 需要的配比，返回成本和调仓后收益。
+    """把当前持仓（x 股 + y 计价币，按 price 计价）换成新区间 [lo,hi] 需要的配比，返回成本和调仓后收益。
+    内部按计价币算（股票/BNB 池即 BNB），返回的金额统一换成美元；gas 传入时已是计价币单位。
     成本 = swap 手续费 + 价格冲击 + 价差（链上价偏离真实股价的那部分，只在买贵 / 卖便宜的方向计） + gas。
     调仓后收益用保守口径：竞争流动性取当前价位的值（其他 LP 会跟着价格移动），成交量取 7 日均值。"""
     need_x, _ = amounts(liq(value, price, lo, hi), price, lo, hi)
@@ -49,11 +48,12 @@ def rebalance(i, value, x, y, price, lo, hi, gas, premium=None, comp_now=None):
     else: spread_pct = max(premium if buy else -premium, 0) + PREMIUM_FLOOR / 2
     spread = swap * spread_pct
     cost = fee + impact + spread + gas
-    share, day = fee_rate(i, lo, hi, value - cost, price, i["vol7"], comp_now)
-    return dict(lo=lo, hi=hi, at=price, value=value, swap=swap, side="买入股票" if buy else "卖出股票",
-                swap_fee=fee, impact=impact, spread=spread, spread_pct=spread_pct, gas=gas, cost=cost,
+    share, day = fee_rate(i, lo, hi, value - cost, price, i["vol7"], comp_now)   # day 已是美元（成交量是美元）
+    q = i.get("qusd", 1); u = lambda v: v * q
+    return dict(lo=lo, hi=hi, at=price, value=u(value), swap=u(swap), side="买入股票" if buy else "卖出股票",
+                swap_fee=u(fee), impact=u(impact), spread=u(spread), spread_pct=spread_pct, gas=u(gas), cost=u(cost),
                 cost_pct=cost / value if value else 0, share=share, fee_day=day,
-                apr24=day * 365 / value if value else 0, payback_days=cost / day if day else None)
+                apr24=day * 365 / u(value) if value else 0, payback_days=u(cost) / day if day else None)
 
 def fair_price(i):
     sym = i["symbol0"] if i["stable_is_1"] else i["symbol1"]
@@ -77,7 +77,8 @@ def fair_price(i):
     if i["bstocks"]:
         try: mult = int(call(i["stock"], "uiMultiplier()"), 16) / 1e18
         except Exception: pass
-    return dict(q, multiplier=mult, fair=q["last"] * mult)
+    fair_usd = q["last"] * mult
+    return dict(q, multiplier=mult, fair_usd=fair_usd, fair=fair_usd / i.get("qusd", 1))   # fair 按计价币
 
 def place(lo, hi, p):
     """价格在区间内的位置：0=下沿，1=上沿；离最近边界的距离（对数收益）。"""
@@ -99,7 +100,7 @@ def rating(i, lo, hi, fair):
         fp = fair["fair"]
         prem = p / fp - 1
         fpos, fedge = place(lo, hi, fp)
-        if fedge < 0: bump(2, f"真实股价折算 ${fp:,.2f} 已在区间外，{('开盘后' if fair['state'] == '休市' else '')}套利会把链上价拉出区间")
+        if fedge < 0: bump(2, f"真实股价折算 {fmt_px(i, fp)} 已在区间外，{('开盘后' if fair['state'] == '休市' else '')}套利会把链上价拉出区间")
         elif fedge < 0.5 * sig: bump(1, f"真实股价折算离边界只有 {fedge*100:.1f}%")
         if abs(prem) > 0.01: bump(1, f"链上价相对真实股价{'溢价' if prem > 0 else '折价'} {abs(prem)*100:.1f}%，会被套利拉回")
         if fair["state"] == "休市": reasons.append("美股休市，链上价没有锚，开盘可能跳空")
@@ -107,12 +108,17 @@ def rating(i, lo, hi, fair):
     return dict(level=["安全", "警惕", "危险"][level], code=level, pos=pos, edge=edge, sigma_day=sig,
                 fair_pos=place(lo, hi, fp)[0] if fp else None, reasons=reasons)
 
+def fmt_px(i, v):
+    return f"{v:.6g} {i['quote_sym']}" if i.get("quote_kind") == "bnb" else f"${v:,.2f}"
+
 def evaluate(pool, lo, hi, capital, shift=0.5):
+    """lo/hi 按计价币（股票/BNB 池是 BNB），capital 是美元。"""
     i = pool_info(pool)
-    p = i["price"]
-    gas = gas_usd()
-    share, day = fee_rate(i, lo, hi, capital, p, i["vol24"])
-    uL = liq(capital, p, lo, hi)
+    p = i["price"]; q = i["qusd"]
+    gas = gas_usd(); gq = gas["usd"] / q
+    cap_q = capital / q
+    share, day = fee_rate(i, lo, hi, cap_q, p, i["vol24"])
+    uL = liq(cap_q, p, lo, hi)
     x, y = amounts(uL, p, lo, hi)
     step = (hi / lo) ** shift
     w = math.sqrt(hi / lo)
@@ -122,11 +128,12 @@ def evaluate(pool, lo, hi, capital, shift=0.5):
     prem = (p / fair["fair"] - 1) if fair else None
     comp = competitor_L(i, p)
     scen = {
-        "up": rebalance(i, xu * hi + yu, xu, yu, hi, lo * step, hi * step, gas["usd"], prem, comp),
-        "down": rebalance(i, xd * lo + yd, xd, yd, lo, lo / step, hi / step, gas["usd"], prem, comp),
-        "recenter": rebalance(i, capital, x, y, p, p / w, p * w, gas["usd"], prem, comp),
+        "up": rebalance(i, xu * hi + yu, xu, yu, hi, lo * step, hi * step, gq, prem, comp),
+        "down": rebalance(i, xd * lo + yd, xd, yd, lo, lo / step, hi / step, gq, prem, comp),
+        "recenter": rebalance(i, cap_q, x, y, p, p / w, p * w, gq, prem, comp),
     }
-    return dict(pool=i["pool"], name=i["name"], price=p, lo=lo, hi=hi, capital=capital, shift=shift,
+    return dict(pool=i["pool"], name=i["name"], price=p, price_usd=p * q, qusd=q, quote_sym=i["quote_sym"], quote_kind=i["quote_kind"],
+                lo=lo, hi=hi, capital=capital, shift=shift,
                 vol24=i["vol24"], share24=share, fee_day24=day, apr24=day * 365 / capital,
-                holdings={"stock": x, "stock_usd": x * p, "stable": y}, gas=gas,
+                holdings={"stock": x, "stock_usd": x * p * q, "stable": y, "stable_usd": y * q}, gas=gas,
                 rebalance=scen, fair=fair, rating=rating(i, lo, hi, fair))

@@ -225,8 +225,8 @@
     <fieldset>
       <legend>你的仓位</legend>
       <div class="pair">
-        <div><label for="lo">下沿 $</label><input id="lo" type="number" step="any"></div>
-        <div><label for="hi">上沿 $</label><input id="hi" type="number" step="any"></div>
+        <div><label for="lo" id="lo-l">下沿 $</label><input id="lo" type="number" step="any"></div>
+        <div><label for="hi" id="hi-l">上沿 $</label><input id="hi" type="number" step="any"></div>
       </div>
       <div class="pair">
         <div><label for="cap">本金 $</label><input id="cap" type="number" value="1000" min="1"></div>
@@ -284,6 +284,16 @@
 <script>
 const $ = id => document.getElementById(id);
 const usd = (v, d = 2) => "$" + Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
+/* 计价币：稳定币池价格按美元，股票/BNB 池价格按 BNB（金额仍按美元） */
+let QUOTE = {sym: "USD", usd: 1};
+const isBNB = () => QUOTE.sym === "BNB";
+const px = (v, d = 2) => isBNB() ? (+v).toPrecision(5) + " BNB" : usd(v, d);
+const pxIn = v => isBNB() ? +(+v).toPrecision(6) : +(+v).toFixed(2);
+function setQuote(p) {
+  QUOTE = {sym: p.quote_sym === "BNB" ? "BNB" : "USD", usd: p.qusd || 1};
+  const u = isBNB() ? "（BNB）" : " $";
+  $("lo-l").textContent = "下沿" + u; $("hi-l").textContent = "上沿" + u;
+}
 const pct = (v, d = 1) => (v * 100).toFixed(d) + "%";
 const signed = (v, f) => (v >= 0 ? "+" : "−") + f(Math.abs(v));
 const tone = v => v >= 0 ? "pos" : "neg";
@@ -292,7 +302,7 @@ const POOLS = {QQQB:"0xfc4e77248b76fefc27c4cac7151a2ee5b5cc590e", AAPLB:"0xe9b99
   GOOGLB:"0x89001d846f7ca36ee089f73eefc25657e1798144", NVDAB:"0x8fb4243b553ac29ba088acf00b9b7da24bd6690c",
   BABAB:"0xfd95cb1391999006eb91797a7c62acfe88b20292", PDDB:"0xd0c2a4dc7c581db2660286660b703cf6883f29ba",
   MSTRB:"0x692081209619735f25700557078ab084d3e5d007", MSFTB:"0x5018b018ceb7645c927c5cf246786f89ebcbe7ea",
-  METAB:"0xc2151a561e928d16576d75ea88544543ac63d80b"};
+  METAB:"0xc2151a561e928d16576d75ea88544543ac63d80b", "BNCB/BNB":"0x320e8096e5e7a46e43446141a5b15d801fc596f5"};
 let depthData = null, poolData = null, checkSeq = 0, btSeq = 0;
 function busy(btn, on, label) { btn.disabled = on; btn.setAttribute("aria-busy", on); btn.textContent = label; }
 function loading(el, on) { if (el) el.dataset.loading = on; }
@@ -334,7 +344,7 @@ function railSVG() {
   const lab = (v, t, c = "") => `<span class="${c}" style="left:${(clamp(x(v)) / W * 100).toFixed(2)}%">${t}</span>`;
   return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="当前价附近的流动性分布与你的区间">
       ${band}${bars}<line x1="${x(price)}" x2="${x(price)}" y1="0" y2="${H}" stroke="${pc}" stroke-width="2"/></svg>
-    <div class="axis">${lab(lo0, usd(lo0, 0), "l")}${has ? lab(lo, usd(lo)) + lab(hi, usd(hi)) : ""}${lab(hi0, usd(hi0, 0), "r")}</div>`;
+    <div class="axis">${lab(lo0, px(lo0, 0), "l")}${has ? lab(lo, px(lo)) + lab(hi, px(hi)) : ""}${lab(hi0, px(hi0, 0), "r")}</div>`;
 }
 function drawRail() { const r = document.querySelector(".rail"); if (r) r.innerHTML = railSVG(); }
 ["lo", "hi"].forEach(id => $(id).addEventListener("input", drawRail));
@@ -352,11 +362,11 @@ function railHover(e) {
   if (!hair) { rail.insertAdjacentHTML("beforeend", '<div class="hair"></div><div class="tip" role="status"></div>'); hair = rail.querySelector(".hair"); tip = rail.querySelector(".tip"); }
   const x = box.left - rail.getBoundingClientRect().left + f * box.width;
   hair.style.left = x + "px";
-  let html = `<b>${usd(price)}</b> <span>当前 ${usd(depthData.price)} ${signed(price / depthData.price - 1, v => pct(v, 2))}</span>`;
+  let html = `<b>${px(price)}</b>${isBNB() ? ` <span>${usd(price * QUOTE.usd)}</span>` : ""} <span>当前 ${px(depthData.price)} ${signed(price / depthData.price - 1, v => pct(v, 2))}</span>`;
   if (has) {
     const mid = Math.sqrt(lo * hi), raw = (Math.log(price) - Math.log(mid)) / (Math.log(hi) - Math.log(lo));
     const pos = Math.max(-0.5, Math.min(0.5, raw)), out = Math.abs(raw) > 0.5;
-    html += `<br><span>较区间中点 ${usd(mid)}</span> <b class="${price >= mid ? "pos" : "neg"}">${signed(price / mid - 1, v => pct(v, 2))}</b>`
+    html += `<br><span>较区间中点 ${px(mid)}</span> <b class="${price >= mid ? "pos" : "neg"}">${signed(price / mid - 1, v => pct(v, 2))}</b>`
           + `<br><span>区间位置</span> <b class="${out ? "neg" : ""}">${signed(pos, v => pct(v, 1))}</b>`
           + `<span>${out ? (raw > 0 ? "（已出上沿）" : "（已出下沿）") : "（下沿 −50% · 上沿 +50%）"}</span>`;
   }
@@ -369,6 +379,7 @@ document.addEventListener("mousemove", e => { const r = e.target.closest?.(".rai
 
 async function check() {
   const btn = $("go"), seq = ++checkSeq; busy(btn, true, "分析中…"); loading($("out"), true);
+  let redo = false;
   const address = $("pool").value.trim();
   try {
     const q = new URLSearchParams({address, capital: $("cap").value || 1000});
@@ -376,12 +387,16 @@ async function check() {
     const [pd, dd] = await Promise.all([api("/api/pool?" + q), api("/api/depth?address=" + address).catch(() => null)]);
     if (seq !== checkSeq) return;
     poolData = pd; depthData = dd;
+    const prevQ = QUOTE.sym; setQuote(pd.pool);
+    if (prevQ !== QUOTE.sym && ($("lo").value || $("hi").value) && !pd.estimate.in_range) {   // 换了计价币，旧区间单位不对
+      $("lo").value = $("hi").value = ""; redo = true; return;
+    }
     const {pool: p, estimate: e, governance: gv} = pd;
-    if (!$("lo").value) $("lo").value = e.lo.toFixed(2);
-    if (!$("hi").value) $("hi").value = e.hi.toFixed(2);
+    if (!$("lo").value) $("lo").value = pxIn(e.lo);
+    if (!$("hi").value) $("hi").value = pxIn(e.hi);
     const state = e.in_range ? `<span class="pos">在区间内</span>` : `<span class="neg">当前价不在区间内，不赚手续费</span>`;
     $("out").innerHTML = `<div class="enter">
-      <div class="head"><h1>${p.name}</h1><span class="price">${usd(p.price)}</span>
+      <div class="head"><h1>${p.name}</h1><span class="price">${px(p.price)}</span>${isBNB() ? `<span class="dim num">${usd(p.price_usd)}</span>` : ""}
         <a class="addr num" href="https://bscscan.com/address/${p.pool}" target="_blank" rel="noopener">${short(p.pool)}</a>${state}</div>
       <div class="duo"><div class="duo-l">
         <div class="rail">${railSVG() || '<p class="dim">深度数据暂不可用</p>'}</div>
@@ -407,6 +422,7 @@ async function check() {
     $("out").innerHTML = `<p class="err enter">${err.message}</p>`;
   } finally {
     if (seq === checkSeq) { busy(btn, false, "分析"); loading($("out"), false); }
+    if (redo && seq === checkSeq) setTimeout(check);
   }
 }
 
@@ -454,14 +470,14 @@ async function position(address, seq) {
       <div class="grade"><span class="dim">区间位置评级</span><b class="lv g${g.code}">${g.level}</b></div>
       <p class="why">${g.reasons.join("；")}</p>
       <dl class="kv">
-        <dt>区间</dt><dd>${usd(r.lo)} – ${usd(r.hi)}</dd>
+        <dt>区间</dt><dd>${px(r.lo)} – ${px(r.hi)}</dd>
         <dt>位置</dt><dd>${pct(g.pos, 0)} <span class="dim">· 离边界 ${pct(g.edge, 1)} · 日波动 ${pct(g.sigma_day, 1)}</span></dd>
-        ${f ? `<dt>真实价</dt><dd>${usd(f.fair)} <span class="dim">· ${f.ticker} ${f.state} · 链上${prem >= 0 ? "溢价" : "折价"} ${pct(Math.abs(prem), 2)}</span></dd>` : `<dt>真实价</dt><dd class="dim">未取到</dd>`}
-        <dt>持仓</dt><dd>${r.holdings.stock.toFixed(4)} 股 + ${usd(r.holdings.stable)}</dd>
+        ${f ? `<dt>真实价</dt><dd>${px(f.fair)} <span class="dim">· ${f.ticker} ${usd(f.last)} ${f.state} · 链上${prem >= 0 ? "溢价" : "折价"} ${pct(Math.abs(prem), 2)}</span></dd>` : `<dt>真实价</dt><dd class="dim">未取到</dd>`}
+        <dt>持仓</dt><dd>${r.holdings.stock.toFixed(4)} 股 + ${isBNB() ? r.holdings.stable.toFixed(4) + " BNB" : usd(r.holdings.stable)}</dd>
       </dl></div>`;
     const name = {up: "涨破上沿后上移", down: "跌破下沿后下移", recenter: "现在按当前价重新居中"};
     const rows = ["up", "down", "recenter"].map(k => { const x = r.rebalance[k]; return `<tr><td>${name[k]}</td>
-      <td>${usd(x.at)}</td><td>${usd(x.lo)} – ${usd(x.hi)}</td><td>${usd(x.swap, 0)}</td>
+      <td>${px(x.at)}</td><td>${px(x.lo)} – ${px(x.hi)}</td><td>${usd(x.swap, 0)}</td>
       <td class="sep">${usd(x.swap_fee)}</td><td>${usd(x.impact)}</td><td title="${x.side}，按 ${pct(x.spread_pct, 2)} 计">${usd(x.spread)}</td><td>${usd(x.gas, 3)}</td><td class="bad">${usd(x.cost)}</td><td>${pct(x.cost_pct, 2)}</td>
       <td class="sep">${usd(x.fee_day)}</td><td>${pct(x.apr24, 0)}</td><td>${x.payback_days == null ? "—" : x.payback_days < 1 ? (x.payback_days * 24).toFixed(0) + " 小时" : x.payback_days.toFixed(1) + " 天"}</td></tr>`; }).join("");
     $("rbmeta").textContent = `平移 ${pct(r.shift, 0)}，gas ${r.gas.gwei.toFixed(2)} gwei，BNB ${usd(r.gas.bnb)}`;
