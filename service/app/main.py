@@ -75,6 +75,23 @@ def pos(address: str, lo: float = Query(..., gt=0), hi: float = Query(..., gt=0)
     if hi / lo < 1.002: raise HTTPException(400, "区间太窄")
     return position.evaluate(address, lo, hi, capital, shift)
 
+@app.get("/api/board")
+def board(pools: str | None = None):
+    ps = [p for p in (pools.split(",") if pools else monitor.KNOWN_POOLS.values()) if p.startswith("0x") and len(p) == 42]
+    if not ps: raise HTTPException(400, "没有池子地址")
+    return cached(("board", tuple(sorted(x.lower() for x in ps))), 300, lambda: analytics.board(ps))
+
+@app.get("/api/siblings")
+def siblings(address: str):
+    _pool(address)
+    try: return cached(("sib", address.lower()), 900, lambda: analytics.siblings(address))
+    except Exception as e: raise HTTPException(502, f"读取同标的池子失败：{e}")
+
+@app.get("/api/source")
+def source():
+    from .chain import data_source
+    return data_source()
+
 @app.get("/api/depth")
 def depth(address: str):
     _pool(address)

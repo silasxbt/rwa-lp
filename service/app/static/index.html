@@ -168,6 +168,16 @@
   .ck-cal i { flex:1; background:var(--rule2); border-radius:1px 1px 0 0; }
   .ck-cal i.cl { background:var(--rule); }
   .ck-cal i.ev { background:var(--ice); }
+  .sib { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:8px; font-size:12px; }
+  .sib:empty { display:none; }
+  .sib button { font:12px var(--sans); color:var(--text); background:transparent; border:1px solid var(--rule2); border-radius:3px; padding:2px 8px; cursor:pointer;
+                transition:border-color 150ms ease, transform 160ms var(--ease-out); }
+  .sib button:active { transform:scale(.97); }
+  .sib button .dim { font-family:var(--mono); font-size:11px; margin-left:4px; }
+  @media (hover:hover) and (pointer:fine) { .sib button:hover { border-color:var(--ice); } }
+  .bd tr[data-p] { cursor:pointer; }
+  .bd tr.on td { background:var(--ice-soft); }
+  .bd td:first-child { font-family:var(--sans); font-weight:500; }
   section { margin-top:26px; }
   section > h2, #btout h2 { font-size:13px; font-weight:600; margin:0 0 8px; display:flex; gap:10px; align-items:baseline; }
   section > h2 small, #btout h2 small { color:var(--dim); font-weight:400; font-size:12px; }
@@ -279,12 +289,17 @@
       <div id="btout"></div>
     </section>
 
+    <section id="boardsec">
+      <h2>标的排行 <small>手续费收益 ÷ 波动²：越高，手续费越能覆盖波动损失。≥10 值得做，低于 5 不划算</small></h2>
+      <div id="board" class="empty">读取中…</div>
+    </section>
+
     <section id="bot">
       <h2>Telegram 提醒</h2>
       <div class="bot" id="tg"></div>
     </section>
 
-    <footer>只读链上数据，不连接钱包。数据来自 BSC 公共 RPC 和 GeckoTerminal；手续费估算基于历史成交量与当前流动性，未计入无常损失，不构成投资建议。</footer>
+    <footer><span id="src"></span> 只读链上数据，不连接钱包。数据来自 BSC 公共 RPC 和 GeckoTerminal；手续费估算基于历史成交量与当前流动性，未计入无常损失，不构成投资建议。</footer>
   </main>
 </div>
 
@@ -386,6 +401,56 @@ function railHover(e) {
 }
 document.addEventListener("mousemove", e => { const r = e.target.closest?.(".rail"); if (r) railHover({currentTarget: r, clientX: e.clientX}); });
 
+/* 标的排行：一次请求比较所有自选池子，点一行载入分析 */
+let boardSeq = 0;
+async function board() {
+  const seq = ++boardSeq, box = $("board"); if (!box) return;
+  try {
+    const rows = await api("/api/board?pools=" + Object.values(POOLS).join(","));
+    if (seq !== boardSeq) return;
+    const mx = Math.max(...rows.map(r => r.edge || 0), 10), cur = $("pool").value.trim().toLowerCase();
+    box.className = "scroll";
+    box.innerHTML = `<table class="bd"><tr><th>池子</th><th>TVL</th><th>日均成交 7 日</th><th title="7 日日均相对 30 日日均">成交趋势</th><th title="池子平均，已扣协议抽成">年化 7 日 / 24h</th><th>日波动</th>
+      <th style="text-align:left">手续费 ÷ 波动²</th><th>结论</th><th style="text-align:left">下一个大事件</th></tr>` + rows.map(r => r.error
+      ? `<tr><td>${short(r.pool)}</td><td colspan="8" class="dim" style="text-align:left">${r.error}</td></tr>`
+      : `<tr data-p="${r.pool}" class="${r.pool === cur ? "on" : ""}"><td>${r.name}</td><td>${usd(r.tvl, 0)}</td><td>${usd(r.vol7, 0)}</td>
+        <td class="${r.trend >= 0 ? "pos" : r.trend < -.4 ? "neg" : ""}">${signed(r.trend, v => pct(v, 0))}</td>
+        <td>${pct(r.apr7, 0)} <span class="dim">/ ${pct(r.apr24, 0)}</span></td><td>${pct(r.sigma_day, 2)}</td>
+        <td style="text-align:left"><span class="bar" style="margin:0 6px 0 0;width:${Math.max(r.edge / mx * 60, 1).toFixed(0)}px;background:${r.edge >= 10 ? "var(--in)" : r.edge >= 5 ? "var(--out)" : "var(--risk)"}"></span>${r.edge.toFixed(1)}</td>
+        <td class="${r.edge >= 10 ? "pos" : r.edge >= 5 ? "neg" : "bad"}" style="font-family:var(--sans)">${r.verdict}</td>
+        <td class="dim" style="text-align:left;font-family:var(--sans)">${r.next_event ? `${r.next_event.title}，${r.next_event.days_away} 天后` : "—"}</td></tr>`).join("") + `</table>`;
+  } catch (err) { if (seq === boardSeq) { box.className = "empty"; box.innerHTML = `<span class="err">${err.message}</span>`; } }
+}
+document.addEventListener("click", e => {
+  const tr = e.target.closest("#board tr[data-p]"); if (!tr) return;
+  $("pool").value = tr.dataset.p; $("lo").value = $("hi").value = ""; syncTickers(); check(); window.scrollTo({top: 0, behavior: "smooth"});
+  document.querySelectorAll("#board tr.on").forEach(x => x.classList.remove("on")); tr.classList.add("on");
+});
+
+/* 同一只股票的其他官方 V3 池子 */
+async function siblings(address, seq) {
+  try {
+    const rows = (await api("/api/siblings?address=" + address)).filter(r => !r.current);
+    if (seq !== checkSeq || !$("sib")) return;
+    $("sib").innerHTML = rows.length ? `<span class="dim">同标的其他池子</span>` + rows.map(r =>
+      `<button type="button" data-p="${r.pool}" title="点击分析这个池子">${r.dex.replace(" V3", "")} · ${r.quote_sym} ${r.fee != null ? (r.fee * 100).toFixed(2).replace(/0$/, "") + "%" : ""}
+        <span class="dim">TVL ${usd(r.tvl, 0)} · 24h 毛年化 ${r.apr24_gross != null ? pct(r.apr24_gross, 0) : "—"}</span></button>`).join("") : "";
+  } catch {}
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("#sib button"); if (!b) return;
+  $("pool").value = b.dataset.p; $("lo").value = $("hi").value = ""; syncTickers(); check();
+});
+
+async function source() {
+  try {
+    const d = await api("/api/source"), el = $("src"); if (!el) return;
+    el.textContent = d.key_configured
+      ? `行情数据源：${d.source}，本月已用 ${(d.month_calls ?? 0).toLocaleString("en-US")} / ${d.budget.toLocaleString("en-US")} 次${d.over_budget ? "（额度用完，已切到公共接口）" : d.paused_seconds ? "（CoinGecko 暂时出错，已切到公共接口）" : ""}。`
+      : `行情数据源：${d.source}。`;
+  } catch {}
+}
+
 async function check() {
   const btn = $("go"), seq = ++checkSeq; busy(btn, true, "分析中…"); loading($("out"), true);
   let redo = false;
@@ -407,6 +472,7 @@ async function check() {
     $("out").innerHTML = `<div class="enter">
       <div class="head"><h1>${p.name}</h1><span class="price">${px(p.price)}</span>${isBNB() ? `<span class="dim num">${usd(p.price_usd)}</span>` : ""}
         <a class="addr num" href="https://bscscan.com/address/${p.pool}" target="_blank" rel="noopener">${short(p.pool)}</a>${state}</div>
+      <div id="sib" class="sib"></div>
       <div class="duo"><div class="duo-l">
         <div class="rail">${railSVG() || '<p class="dim">深度数据暂不可用</p>'}</div>
       </div><div id="posbox"><div class="posbox"><div class="grade"><span class="dim" style="font-size:11px">区间位置评级</span><div class="lv dim">…</div></div></div></div></div>
@@ -426,6 +492,7 @@ async function check() {
       <section style="margin-top:18px"><h2>事件钟 <small id="ckmeta"></small></h2><div id="clock" class="dim">计算中…</div></section>
       <section style="margin-top:18px"><h2>调仓成本估算 <small id="rbmeta"></small></h2><div id="rebal" class="dim">计算中…</div></section></div>`;
     drawWin();
+    siblings(address, seq);
     position(address, seq);
   } catch (err) {
     if (seq !== checkSeq) return;
@@ -609,7 +676,7 @@ $("tg").innerHTML = bot
      <span class="dim">价格接近或超出区间、区间评级变化、发行方升级、暂停、拉黑、大额增发时推送</span>`
   : `<span class="dim">机器人尚未配置。</span>`;
 $("go").onclick = check; $("bt").onclick = backtest;
-syncTickers(); presets(); check(); block(); setInterval(block, 6000);
+syncTickers(); presets(); check(); block(); board(); source(); setInterval(block, 6000);
 </script>
 </body>
 </html>

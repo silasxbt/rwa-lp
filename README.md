@@ -44,10 +44,12 @@ FastAPI 服务，部署在 GCP Cloud Run（asia-east1），网址 https://rwalp.
 - 支持股票/USDT、股票/USDC、股票/BNB 三类池子；BNB 池价格按 BNB 显示，金额按 U
 - 网页：池子体检、手续费估算、区间回测（含出区间平移调仓的 swap 费 / 价格冲击 / gas 成本）、bStocks 治理状态
 - 回测可选 Delta 对冲（永续合约 / 券商融券），按真实股价小时线计对冲盈亏，给出持仓成本、交易成本和不同本金规模下是否划算
+- 标的排行：一次请求比较全部自选池子的「手续费收益 ÷ 波动²」、成交趋势和下一个大事件；分析页列出同一只股票的其他官方 V3 池子
+- 行情数据：配了 `COINGECKO_API_KEY` 时优先走 CoinGecko onchain 接口，限流、报错或超过月度预算（`COINGECKO_MONTHLY_BUDGET`，默认 9000 次）时自动退回 GeckoTerminal 公共接口；用量按月记在 Firestore，`/api/source` 可查
 - 事件钟：财报、FOMC、CPI、非农、休市日折算成额外波动，用首次穿越近似给出 1/3/7/14/30 天出界概率，评级按 7 天出界概率定（`app/events.py`，日历需手动维护）
 - 发行方风险调整后年化：按你填的发行方年化出事概率扣减
 - 区间评估：近 24h 年化、三种调仓情形的成本与回本时间、对照真实股价（Yahoo Finance）的区间位置评级
-- API：`/api/pool`、`/api/position`、`/api/backtest`、`/api/depth`、`/api/bstocks`，文档见 `/api/docs`
+- API：`/api/pool`、`/api/position`、`/api/backtest`、`/api/depth`、`/api/board`、`/api/siblings`、`/api/source`、`/api/bstocks`，文档见 `/api/docs`
 - Telegram 机器人：`/watch` 订阅区间提醒，订阅者自动接收治理告警
 - Cloud Scheduler 每分钟调用 `/cron/tick`（`X-Cron-Key` 校验），状态存 Firestore
 - 密钥在 Secret Manager：`rwalp-cron-key`、`rwalp-tg-webhook-secret`、`rwalp-tg-token`、`coingecko-api-key`（可选，设了 `COINGECKO_API_KEY` 就走 CoinGecko onchain 接口，否则走 GeckoTerminal 公共接口）

@@ -1,7 +1,7 @@
 """池子体检、手续费估算、区间回测（含出区间平移调仓）。"""
 import math, statistics as st, datetime as dt
 from zoneinfo import ZoneInfo
-from .chain import call, rpc, gt, cached, symbol, addr, pad, words
+from .chain import call, rpc, gt, gt_multi, token_pools, cached, symbol, addr, pad, words
 
 FACTORIES = {"0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865": "PancakeSwap V3",
              "0xdb1d10011ad0ff90774d0c6bb92e5c5c8b4461f7": "Uniswap V3 (BSC)"}
@@ -25,6 +25,7 @@ def quote_of(t0, t1):
     return None, None
 BSTOCKS_BEACON = "0x156d6dce9a4f6139a3406f1f021f1a4880de93a3"
 BEACON_SLOT = "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50"
+DAY_TTL = 6 * 3600   # 日线只用已收盘的日子，6 小时刷新一次足够，省额度
 GAS_USD = 0.1  # BSC 上撤池+swap+开仓三笔交易合计
 NY = ZoneInfo("America/New_York")
 
@@ -60,8 +61,8 @@ def pool_info(pool):
     cut = protocol_cut(dex, slot0[5]) if s["dex"] else 0
     d = 10 ** (s["d0"] - s["d1"])
     price = P * d if s["stable_is_1"] else 1 / (P * d)
-    a = gt(pool)["attributes"]
-    o = sorted(gt(pool + "/ohlcv/day", limit=31, token=s["stock"])["attributes"]["ohlcv_list"])[:-1]
+    a = gt(pool, ttl=900)["attributes"]
+    o = sorted(gt(pool + "/ohlcv/day", ttl=DAY_TTL, limit=31, token=s["stock"])["attributes"]["ohlcv_list"])[:-1]
     vols = [x[5] for x in o]
     v7 = st.mean(vols[-7:]) if vols else 0
     v30 = st.mean(vols[-30:]) if vols else 0
@@ -69,7 +70,7 @@ def pool_info(pool):
     v14 = st.mean(vols[-14:]) if vols else 0
     qusd = quote_usd(s["stable"])
     if s["quote_kind"] == "bnb":  # 股票/BNB 池：波动率按比值（BNB 计价）算
-        oq = sorted(gt(pool + "/ohlcv/day", limit=31, token=s["stock"], currency="token")["attributes"]["ohlcv_list"])[:-1]
+        oq = sorted(gt(pool + "/ohlcv/day", ttl=DAY_TTL, limit=31, token=s["stock"], currency="token")["attributes"]["ohlcv_list"])[:-1]
         closes = [x[4] for x in oq]
     else:
         closes = [x[4] for x in o]
@@ -319,3 +320,46 @@ def depth(pool, span=0.12, buckets=60):
         out.append({"p0": edges[j], "p1": edges[j + 1], "L": act.get(x, 0) / scale})
     return {"price": i["price"], "Lh": i["Lh"], "lo": lo, "hi": hi, "bins": out, "tick_spacing": ts,
             "quote_sym": i["quote_sym"], "quote_kind": i["quote_kind"], "qusd": i["qusd"]}
+
+
+def board(pools):
+    """标的排行：手续费收益 ÷ 波动²（越高，手续费越能覆盖波动损失），外加成交趋势和下一个事件。"""
+    from concurrent.futures import ThreadPoolExecutor
+    from .events import events_for
+    from .position import ticker_of
+    pools = list(dict.fromkeys(p.lower() for p in pools))[:12]
+    try: gt_multi(pools)
+    except Exception: pass
+    def row(p):
+        try: i = pool_info(p)
+        except Exception as e: return {"pool": p, "error": str(e)[:80]}
+        y7 = i["vol7"] * i["lp_fee"] / i["tvl"] if i["tvl"] else 0          # 池子平均每天的手续费收益率
+        y24 = i["vol24"] * i["lp_fee"] / i["tvl"] if i["tvl"] else 0
+        sig = i["sigma_day"] or 0
+        edge = y7 / sig ** 2 if sig else 0
+        tk = ticker_of(i)
+        nxt = next((e for e in events_for(tk or "", 30) if e["jump"] >= 0.02 or e["kind"] == "FOMC"), None)
+        return dict(pool=i["pool"], name=i["name"], symbol=i["stock_sym"], quote_sym=i["quote_sym"], price=i["price"], price_usd=i["price_usd"],
+                    tvl=i["tvl"], vol24=i["vol24"], vol7=i["vol7"], vol30=i["vol30"], trend=i["vol7"] / i["vol30"] - 1 if i["vol30"] else 0,
+                    apr7=y7 * 365, apr24=y24 * 365, sigma_day=sig, edge=edge, age_days=i["age_days"], bstocks=i["bstocks"],
+                    verdict="值得做" if edge >= 10 else "一般" if edge >= 5 else "不划算",
+                    next_event=nxt and {"title": nxt["title"], "days_away": nxt["days_away"], "jump": nxt["jump"]})
+    with ThreadPoolExecutor(4) as ex: rows = list(ex.map(row, pools))
+    return sorted(rows, key=lambda r: -r.get("edge", -1))
+
+def siblings(pool):
+    """同一只股票的其他 V3 池子（不同 DEX、费率档、计价币），方便比较该进哪个。"""
+    i = pool_info(pool)
+    out = []
+    for d in token_pools(i["stock"]):
+        a, rel = d["attributes"], d["relationships"]
+        other = [rel[k]["data"]["id"].split("_")[-1].lower() for k in ("base_token", "quote_token")]
+        q = next((t for t in other if t in QUOTES), None)
+        dex = rel["dex"]["data"]["id"]
+        if not q or not any(x in dex for x in ("pancakeswap-v3", "uniswap-bsc")): continue   # 只列官方 V3，且计价币是 USDT/USDC/BNB
+        m = __import__("re").search(r"([\d.]+)%", a["name"]); fee = float(m.group(1)) / 100 if m else None
+        tvl, v24 = float(a["reserve_in_usd"] or 0), float(a["volume_usd"]["h24"] or 0)
+        if tvl < 1000: continue
+        out.append(dict(pool=a["address"].lower(), dex="PancakeSwap V3" if "pancake" in dex else "Uniswap V3", quote_sym=QUOTES[q], fee=fee,
+                        tvl=tvl, vol24=v24, apr24_gross=v24 * fee / tvl * 365 if fee and tvl else None, current=a["address"].lower() == i["pool"]))
+    return sorted(out, key=lambda r: -r["tvl"])[:6]
