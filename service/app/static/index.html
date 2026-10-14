@@ -162,6 +162,12 @@
   .ends-mid { font:11px var(--mono); color:var(--dim); margin-top:4px; }
   .quote { display:flex; gap:4px 12px; flex-wrap:wrap; font-size:11px; color:var(--dim); margin-top:8px; padding-top:8px; border-top:1px dashed var(--rule); }
   .quote b { color:var(--text); font:500 12px var(--mono); }
+  .ck-stats { margin:0 0 10px; }
+  .ck-stats small { display:block; font-size:11px; margin-top:1px; }
+  .ck-cal { display:flex; align-items:flex-end; gap:2px; height:56px; padding:6px 8px 0; border:1px solid var(--rule); border-radius:4px; background:var(--deck); }
+  .ck-cal i { flex:1; background:var(--rule2); border-radius:1px 1px 0 0; }
+  .ck-cal i.cl { background:var(--rule); }
+  .ck-cal i.ev { background:var(--ice); }
   section { margin-top:26px; }
   section > h2, #btout h2 { font-size:13px; font-weight:600; margin:0 0 8px; display:flex; gap:10px; align-items:baseline; }
   section > h2 small, #btout h2 small { color:var(--dim); font-weight:400; font-size:12px; }
@@ -230,6 +236,7 @@
       </div>
       <div class="pair">
         <div><label for="cap">本金 $</label><input id="cap" type="number" value="1000" min="1"></div>
+        <div><label for="risk" title="你估计发行方一年内出事、本金归零的概率">发行方年化出事概率 %</label><input id="risk" type="number" value="5" min="0" max="100" step="1"></div>
         <div></div>
       </div>
       <button class="run" id="go">分析</button>
@@ -348,6 +355,8 @@ function railSVG() {
 }
 function drawRail() { const r = document.querySelector(".rail"); if (r) r.innerHTML = railSVG(); }
 ["lo", "hi"].forEach(id => $(id).addEventListener("input", drawRail));
+$("risk").value = localStorage.getItem("rwalp.risk") ?? 5;
+$("risk").addEventListener("input", () => { localStorage.setItem("rwalp.risk", $("risk").value); drawWin(); });
 
 /* 深度图悬停：光标价位相对区间中点的涨跌、在区间内的位置（下沿 −50%，上沿 +50%） */
 function railHover(e) {
@@ -410,10 +419,11 @@ async function check() {
         <div><dt>日均成交</dt><dd id="w-vol">—</dd></div>
         <div><dt>手续费/天</dt><dd id="w-fee">—</dd></div>
         <div><dt>手续费年化 <span class="dim">· 全池平均</span></dt><dd id="w-apr">—</dd></div>
-        <div><dt>池子 TVL</dt><dd>${usd(p.tvl, 0)}</dd></div>
+        <div><dt title="手续费年化扣掉发行方出事的期望损失：(1−p)·(1+年化) − 1">风险调整后年化</dt><dd id="w-adj">—</dd></div>
       </dl>
       ${risksHTML([...p.flags, ...(gv || [])])}
       <p class="note">手续费 = 所选口径的日均成交 × LP 实得费率 × 你在当前价位的流动性占比；别人增减流动性会改变份额。</p>
+      <section style="margin-top:18px"><h2>事件钟 <small id="ckmeta"></small></h2><div id="clock" class="dim">计算中…</div></section>
       <section style="margin-top:18px"><h2>调仓成本估算 <small id="rbmeta"></small></h2><div id="rebal" class="dim">计算中…</div></section></div>`;
     drawWin();
     position(address, seq);
@@ -434,6 +444,8 @@ function drawWin() {
   $("w-vol").textContent = usd(w.vol, 0);
   $("w-fee").textContent = usd(w.fee_day);
   $("w-apr").innerHTML = `${pct(w.apr, 0)} <span class="dim">· ${pct(w.pool_apr, 0)}</span>`;
+  const rp = Math.min(Math.max(+$("risk").value || 0, 0), 100) / 100, adj = (1 - rp) * (1 + w.apr) - 1, be = w.apr / (1 + w.apr);
+  $("w-adj").innerHTML = `<span class="${adj >= 0 ? "" : "neg"}">${pct(adj, 0)}</span> <span class="dim" title="出事概率超过这个值，做 LP 不如拿稳定币">· 盈亏平衡 ${pct(be, 0)}</span>`;
   const all = WIN.map(k => poolData.estimate.windows[k].apr), mx = Math.max(...all), mn = Math.min(...all);
   $("winnote").textContent = (w.partial ? "池子上线不足该天数，按已有天数平均。" : "") +
     `各口径年化 ${pct(mn, 0)} – ${pct(mx, 0)}` + (winKey === "24h" ? "，24h 受休市和单日行情影响大" : "");
@@ -443,6 +455,28 @@ document.addEventListener("click", e => {
   const b = e.target.closest("#win button"); if (!b) return;
   winKey = b.dataset.w; localStorage.setItem("rwalp.win", winKey); drawWin();
 });
+
+/* 事件钟：未来 30 天每天的预期波动（含财报、议息、CPI、非农的跳空），以及区间出界概率 */
+function clockHTML(g) {
+  const ex = g.exit, cal = g.calendar || [], evs = g.events || [];
+  if (!ex || !ex.in_range) return `<p class="dim">价格已在区间外，不计算出界概率。</p>`;
+  const cells = ["1d", "3d", "7d", "14d", "30d"].map(k => { const r = ex.horizons[k];
+    return `<div><dt>${k.replace("d", " 天内出界")}</dt><dd class="${r.p >= .5 ? "bad" : r.p >= .25 ? "neg" : ""}">${pct(r.p, 0)}</dd>
+      <small class="dim">不含事件 ${pct(r.p_no_events, 0)} · 多在${r.down >= r.up ? "下沿" : "上沿"}</small></div>`; }).join("");
+  const mx = Math.max(...cal.map(c => c.sd), 1e-9);
+  const bars = cal.map((c, n) => `<i class="${c.closed ? "cl" : ""} ${c.events.length ? "ev" : ""}" style="height:${Math.max(c.sd / mx * 100, 6).toFixed(0)}%"
+    title="${c.date}${c.closed ? "（休市）" : ""} 预期波动 ±${pct(c.sd, 1)}${c.events.length ? "：" + c.events.join("、") : ""}"></i>`).join("");
+  const kind = {EARN: "财报", FOMC: "议息", CPI: "CPI", NFP: "非农", CLOSED: "休市"};
+  const rows = evs.map(e => `<tr><td>${e.impact.slice(5)}</td><td>${e.days_away === 0 ? "今天" : e.days_away + " 天后"}</td><td>${kind[e.kind] || e.kind}</td>
+    <td style="text-align:left;font-family:var(--sans)">${e.title}</td><td>${e.jump ? "±" + pct(e.jump, 1) : "—"}</td>
+    <td class="${e.breach_1sd ? "bad" : "dim"}">${e.jump ? (e.breach_1sd ? "会打穿" + e.breach_side : "不会") : "—"}</td>
+    <td class="dim">${e.confirmed ? "已确认" : "按往年推算"}</td></tr>`).join("");
+  return `<dl class="stats ck-stats">${cells}</dl>
+    <div class="ck-cal" role="img" aria-label="未来 30 天每日预期波动">${bars}</div>
+    <div class="ends"><span>明天</span><span>预计 30 天里有 ${ex.expected_days_30.toFixed(0)} 天在区间内</span><span>30 天后</span></div>
+    ${rows ? `<div class="scroll" style="margin-top:8px"><table><tr><th>日期</th><th>距今</th><th>类型</th><th style="text-align:left">事件</th><th>典型跳空</th><th>一次跳空打穿区间</th><th>日期来源</th></tr>${rows}</table></div>` : ""}
+    <p class="note">出界概率用首次穿越近似：把未来每天的方差相加（普通交易日 σ²，周末和休市日按 30%，事件日另加典型跳空²），P ≈ 2·Φ(−离边界距离 ÷ √总方差)，上下沿合并。柱子是每天的预期波动，亮色是事件日，暗色是休市日。财报日期标「按往年推算」的请以公司公告为准；盘后财报的冲击记在下一个交易日。评级里的「7 天出界概率」就是这里的数。</p>`;
+}
 
 function risksHTML(all) {
   const cats = ["池子", "收益", "发行方"], bad = all.filter(f => f.ok !== true);
@@ -475,6 +509,8 @@ async function position(address, seq) {
         ${f ? `<dt>真实价</dt><dd>${px(f.fair)} <span class="dim">· ${f.ticker} ${usd(f.last)} ${f.state} · 链上${prem >= 0 ? "溢价" : "折价"} ${pct(Math.abs(prem), 2)}</span></dd>` : `<dt>真实价</dt><dd class="dim">未取到</dd>`}
         <dt>持仓</dt><dd>${r.holdings.stock.toFixed(4)} 股 + ${isBNB() ? r.holdings.stable.toFixed(4) + " BNB" : usd(r.holdings.stable)}</dd>
       </dl></div>`;
+    $("ckmeta").textContent = g.ticker ? `${g.ticker}，未来 30 天，日波动 ${pct(g.sigma_day, 1)}` : "";
+    $("clock").className = ""; $("clock").innerHTML = clockHTML(g);
     const name = {up: "涨破上沿后上移", down: "跌破下沿后下移", recenter: "现在按当前价重新居中"};
     const rows = ["up", "down", "recenter"].map(k => { const x = r.rebalance[k]; return `<tr><td>${name[k]}</td>
       <td>${px(x.at)}</td><td>${px(x.lo)} – ${px(x.hi)}</td><td>${usd(x.swap, 0)}</td>
@@ -489,7 +525,7 @@ async function position(address, seq) {
       <p class="note">换仓金额按出界时仓位已全部变成单一资产、要换回新区间所需配比计算。价格冲击按目标价位的链上活跃流动性沿 V3 曲线估算；价差 = 链上价相对真实股价的偏离（只在买贵或卖便宜的方向计）+ 0.1% 底线，休市或取不到真实股价时按 0.2%；gas 用链上实时 gasPrice × 约 85 万 gas × Chainlink BNB 价格。调仓后收益是保守口径：假设其他 LP 会跟着价格移动、你的份额与现在相同，成交量取 7 日均值。没有计入出区间时已经形成的无常损失。</p>`;
   } catch (err) {
     $("posbox").innerHTML = `<p class="err">区间评估失败：${err.message}</p>`;
-    $("rebal").innerHTML = "";
+    $("rebal").innerHTML = ""; if ($("clock")) $("clock").innerHTML = "";
   }
 }
 

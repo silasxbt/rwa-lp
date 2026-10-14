@@ -3,8 +3,11 @@ import os, time, threading, requests
 from Crypto.Hash import keccak
 
 RPC = os.environ.get("BSC_RPC", "https://bsc-rpc.publicnode.com")
-GT = "https://api.geckoterminal.com/api/v2/networks/bsc/pools/"
+CG_KEY = os.environ.get("COINGECKO_API_KEY", "")
+# 有 CoinGecko Demo key 时走 CoinGecko 的 onchain 接口（同一套 GeckoTerminal 数据，限额高很多）；否则走 GeckoTerminal 公共接口
+GT = "https://api.coingecko.com/api/v3/onchain/networks/bsc/pools/" if CG_KEY else "https://api.geckoterminal.com/api/v2/networks/bsc/pools/"
 _s = requests.Session()
+if CG_KEY: _s.headers["x-cg-demo-api-key"] = CG_KEY
 _cache, _lock = {}, threading.Lock()
 
 def k(s: str) -> str:

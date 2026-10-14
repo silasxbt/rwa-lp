@@ -55,9 +55,12 @@ def rebalance(i, value, x, y, price, lo, hi, gas, premium=None, comp_now=None):
                 cost_pct=cost / value if value else 0, share=share, fee_day=day,
                 apr24=day * 365 / u(value) if value else 0, payback_days=u(cost) / day if day else None)
 
+def ticker_of(i):
+    sym = (i["symbol0"] if i["stable_is_1"] else i["symbol1"]).upper()
+    return TICKERS.get(sym) or (sym[:-1] if sym.endswith("B") else None)
+
 def fair_price(i):
-    sym = i["symbol0"] if i["stable_is_1"] else i["symbol1"]
-    tk = TICKERS.get(sym.upper()) or (sym[:-1].upper() if sym.upper().endswith("B") else None)
+    tk = ticker_of(i)
     if not tk: return None
     def f():
         r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}", params={"interval": "1m", "range": "1d", "includePrePost": "true"},
@@ -86,15 +89,26 @@ def place(lo, hi, p):
     edge = min(math.log(p / lo), math.log(hi / p))
     return pos, edge
 
+EXIT_WARN, EXIT_DANGER = 0.25, 0.50   # 7 天出界概率阈值
+
 def rating(i, lo, hi, fair):
+    """评级 = 出界概率（含事件跳空的首次穿越近似，见 events.py）+ 真实股价位置 + 溢价。"""
+    from .events import clock
     sig = i["sigma_day"] or 0.02
     p = i["price"]
     pos, edge = place(lo, hi, p)
     reasons, level = [], 0  # 0 安全 1 警惕 2 危险
     def bump(l, why): nonlocal level; level = max(level, l); reasons.append(why)
+    clk = clock(ticker_of(i) or "", p, lo, hi, sig)
+    ex = clk["exit"]
     if edge < 0: bump(2, "链上价格已在区间外，停止收手续费")
-    elif edge < 0.5 * sig: bump(2, f"离边界仅 {edge*100:.1f}%，不到半天的典型波动（日波动 {sig*100:.1f}%）")
-    elif edge < sig: bump(1, f"离边界 {edge*100:.1f}%，小于一天的典型波动（{sig*100:.1f}%）")
+    elif ex.get("in_range"):
+        p7 = ex["horizons"]["7d"]["p"]; p1 = ex["horizons"]["1d"]["p"]
+        near = next((e for e in clk["events"] if e["days_away"] <= 7 and e.get("breach_1sd")), None)
+        why = f"7 天出界概率 {p7*100:.0f}%" + (f"（{near['title']} {near['days_away']} 天后，1 次典型跳空就会打穿{near['breach_side']}）" if near else "")
+        if p7 >= EXIT_DANGER or p1 >= 0.2: bump(2, why)
+        elif p7 >= EXIT_WARN or near: bump(1, why)
+        else: reasons.append(why)
     fp = None
     if fair:
         fp = fair["fair"]
@@ -104,9 +118,9 @@ def rating(i, lo, hi, fair):
         elif fedge < 0.5 * sig: bump(1, f"真实股价折算离边界只有 {fedge*100:.1f}%")
         if abs(prem) > 0.01: bump(1, f"链上价相对真实股价{'溢价' if prem > 0 else '折价'} {abs(prem)*100:.1f}%，会被套利拉回")
         if fair["state"] == "休市": reasons.append("美股休市，链上价没有锚，开盘可能跳空")
-    if not reasons: reasons.append(f"离最近边界 {edge*100:.1f}%，约 {edge/sig:.1f} 个日波动")
+    if not reasons: reasons.append(f"离最近边界 {edge*100:.1f}%")
     return dict(level=["安全", "警惕", "危险"][level], code=level, pos=pos, edge=edge, sigma_day=sig,
-                fair_pos=place(lo, hi, fp)[0] if fp else None, reasons=reasons)
+                fair_pos=place(lo, hi, fp)[0] if fp else None, reasons=reasons, exit=ex, events=clk["events"], calendar=clk["calendar"], today=clk["today"], ticker=clk["ticker"])
 
 def fmt_px(i, v):
     return f"{v:.6g} {i['quote_sym']}" if i.get("quote_kind") == "bnb" else f"${v:,.2f}"
