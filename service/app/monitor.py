@@ -160,6 +160,10 @@ def rating_alerts(ws):
     from .analytics import pool_info
     from .position import rating, fair_price
     infos, sent, now = {}, 0, time.time()
+    try:   # 所有订阅的池子合成一次请求，监控的额度消耗不随订阅数量增长
+        from .chain import gt_multi
+        gt_multi(sorted({w["pool"] for w in ws}))
+    except Exception: pass
     for w in ws:
         try:
             if w["pool"] not in infos:
