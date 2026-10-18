@@ -1,5 +1,5 @@
 """每分钟由 Cloud Scheduler 触发：bStocks 治理状态变化 → 广播；订阅池子出/近区间 → 通知订阅者。"""
-from .chain import rpc, batch, calls, cached, k, pad, addr, words
+from .chain import rpc, call, batch, calls, cached, k, pad, addr, words
 from .analytics import BSTOCKS_BEACON, BEACON_SLOT, STABLES, quote_of
 import time
 from . import store, telegram
@@ -84,11 +84,44 @@ def zone(lo, hi, p):
 ZONE_TIP = {"跌破下沿": "仓位已全部变成股票，停止收手续费", "涨破上沿": "仓位已全部变成稳定币，停止收手续费",
             "接近下沿": "距离下沿不到 1%", "接近上沿": "距离上沿不到 1%", "区间内": "已回到区间内"}
 
+MINT_SINGLE = 0.05   # 单笔增发超过总供应量 5% 告警
+MINT_DAILY = 0.20    # 当天累计增发超过总供应量 20% 告警（每天只报一次）
+
+def mint_roles(token):
+    """有权铸币的地址：Issuer + Admin（每小时刷新）。正常申购由它们发起。"""
+    def f():
+        out = set()
+        for role in (k("ISSUER_ROLE"), "0" * 64):
+            n = int(call(token, "getRoleMemberCount(bytes32)", role), 16)
+            for j in range(n): out.add(addr(call(token, "getRoleMember(bytes32,uint256)", role + format(j, "064x"))))
+        return out
+    return cached(("mint_roles", token), 3600, f)
+
+def check_mint(sym, token, log, pools, supply):
+    """判断一笔增发是否异常。正常申购（Issuer 发起、不砸池子、量级正常）不报警。返回告警文字列表。"""
+    out, blk = [], int(log["blockNumber"], 16)
+    amt = int(log["data"], 16) / 1e18
+    tx = rpc("eth_getTransactionByHash", [log["transactionHash"]]) or {}
+    roles = mint_roles(token)
+    sender, target = (tx.get("from") or "").lower(), (tx.get("to") or "").lower()
+    if sender not in roles and target not in roles:
+        out.append(f"{sym} 出现非 Issuer 发起的增发 {amt:,.1f} 枚（发起地址 {sender[:10]}…），可能是私钥被盗或合约被改，区块 {blk}")
+    if supply and amt >= supply * MINT_SINGLE:
+        out.append(f"{sym} 单笔增发 {amt:,.1f} 枚，占总供应量 {amt / supply * 100:.1f}%，远超正常申购，区块 {blk}")
+    rc = rpc("eth_getTransactionReceipt", [log["transactionHash"]]) or {}
+    dumped = sum(int(l["data"], 16) / 1e18 for l in rc.get("logs", [])
+                 if l.get("address", "").lower() == token and len(l.get("topics", [])) == 3 and l["topics"][0] == TRANSFER
+                 and "0x" + l["topics"][2][-40:] in pools)
+    if dumped > 0:
+        out.append(f"{sym} 增发后在同一笔交易里直接卖进 LP 池子 {dumped:,.1f} 枚，区块 {blk}")
+    return out, amt
+
 def scan_logs(frm, to, pools, toks):
     alerts = []
     q = lambda a, b, addr_, topics=None: rpc("eth_getLogs", [{"address": addr_, "fromBlock": hex(a), "toBlock": hex(b),
                                                              **({"topics": topics} if topics else {})}])
-    bal = {}
+    pools = {p.lower() for p in pools}
+    supply, minted = {}, {}
     b = frm
     while b <= to:
         e = min(b + 49, to)
@@ -100,12 +133,22 @@ def scan_logs(frm, to, pools, toks):
             if hit: alerts.append(f"Compliance 名单变动涉及池子 {', '.join(hit)} 区块 {int(l['blockNumber'], 16)}")
         for s, t in toks.items():
             for l in q(b, e, t, [TRANSFER, ZERO]):
-                amt = int(l["data"], 16) / 1e18
-                if s not in bal:
-                    bal[s] = int(rpc("eth_call", [{"to": t, "data": "0x" + k("balanceOf(address)")[:8] + pad(KNOWN_POOLS[s])}, "latest"]), 16) / 1e18
-                if amt >= max(bal[s] * 0.5, 1):
-                    alerts.append(f"{s} 大额增发 {amt:,.1f} 枚（主池只有 {bal[s]:,.1f} 枚）区块 {int(l['blockNumber'], 16)}")
+                if s not in supply: supply[s] = int(call(t, "totalSupply()"), 16) / 1e18
+                try: a, amt = check_mint(s, t, l, pools, supply[s])
+                except Exception: a, amt = [], int(l["data"], 16) / 1e18
+                alerts += a; minted[s] = minted.get(s, 0) + amt
         b = e + 1
+    # 当天累计增发：超过总供应量 20% 时报一次
+    if minted:
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        st = store.get_state("mint_day") or {}
+        if st.get("day") != day: st = {"day": day, "sum": {}, "alerted": []}
+        for sym, amt in minted.items():
+            st["sum"][sym] = st["sum"].get(sym, 0) + amt
+            if sym not in st["alerted"] and supply.get(sym) and st["sum"][sym] >= supply[sym] * MINT_DAILY:
+                st["alerted"].append(sym)
+                alerts.append(f"{sym} 今天累计增发 {st['sum'][sym]:,.0f} 枚，占总供应量 {st['sum'][sym] / supply[sym] * 100:.0f}%，明显高于平时")
+        store.set_state("mint_day", st)
     return alerts
 
 def tick():
