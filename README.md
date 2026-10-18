@@ -48,6 +48,13 @@ FastAPI 服务，部署在 GCP Cloud Run（asia-east1），网址 https://rwalp.
 - 行情数据：配了 `COINGECKO_API_KEY` 时优先走 CoinGecko onchain 接口，限流、报错或超过月度预算（`COINGECKO_MONTHLY_BUDGET`，默认 9000 次）时自动退回 GeckoTerminal 公共接口；用量按月记在 Firestore，`/api/source` 可查
 - 事件钟：财报、FOMC、CPI、非农、休市日折算成额外波动，用首次穿越近似给出 1/3/7/14/30 天出界概率，评级按 7 天出界概率定（`app/events.py`，日历需手动维护）
 - 发行方风险调整后年化：按你填的发行方年化出事概率扣减
+- 工具台（`app/research.py`、`app/strategy.py`）：
+  - 投研审计：Yahoo 基本面（估值、增长、52 周位置、均线、分析师目标、ETF 持仓）+ 合约审计（代理结构、升级权限归属、按 BscScan 验证 ABI 归类写函数、Admin/Issuer 是单签/多签/合约、持币集中度、GeckoTerminal 评分）+ 代币化规模和链上溢价；配 `ETHERSCAN_API_KEY` 读源码，否则按字节码选择器粗查
+  - 选区间：网格扫描上下沿，前瞻模型（含事件的出界概率、LVR、调仓成本）和历史滚动回测取较差者排序，给出保守 / 平衡 / 进取三个参考区间和 1/1.5/2σ 波动带
+  - 年化测算：毛手续费 → × 预期在区间时间 → − LVR 无常损失 → − 调仓损失折合年化 → 净年化 → 周复投 → 扣发行方风险，五个成交口径并列
+  - 高阶策略：分层 LP 回测与单层对照；保护性看跌 / 看跌价差成本（Yahoo 期权链）、手续费隐含波动 vs 期权隐含波动；持币、纯 LP、LP + 永续空、LP + 看跌、纯做空的情景盈亏与期望
+  - 池子追踪：TVL 骤降、链上价偏离真实股价、异常放量、1 小时急涨急跌，每 5 分钟检查，推送给订阅者（Telegram `/alerts` 查最近记录）
+- 事件钟的个股财报日期优先用 Yahoo 的日期
 - 区间评估：近 24h 年化、三种调仓情形的成本与回本时间、对照真实股价（Yahoo Finance）的区间位置评级
 - API：`/api/pool`、`/api/position`、`/api/backtest`、`/api/depth`、`/api/board`、`/api/siblings`、`/api/source`、`/api/bstocks`，文档见 `/api/docs`
 - Telegram 机器人：`/watch` 订阅区间提醒，订阅者自动接收治理告警

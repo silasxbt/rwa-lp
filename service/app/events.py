@@ -54,6 +54,18 @@ def _impact_day(date, when):
         while d.weekday() >= 5: d += dt.timedelta(days=1)
     return d
 
+def earnings(ticker):
+    """财报日期：手动日历标了已确认的直接用，否则用 Yahoo 的日期（取不到再退回按往年推算）。"""
+    e = EARNINGS.get(ticker)
+    if not ticker or (e and e["confirmed"]) or ticker in ("QQQ", "BNC"): return e
+    try:
+        from .research import earnings_date
+        y = earnings_date(ticker)
+    except Exception:
+        y = None
+    if not y: return e
+    return dict(e or {"time": "after", "jump": 0.06}, date=y[0], confirmed=y[1], src="Yahoo")
+
 def events_for(ticker, days=30, today=None):
     """该标的未来 days 天内的价格事件，按日期排序。"""
     today = today or dt.datetime.now(NY).date()
@@ -64,14 +76,14 @@ def events_for(ticker, days=30, today=None):
         d = dt.date.fromisoformat(m["date"])
         if today <= d <= end:
             out.append(dict(m, ticker=ticker, impact=d.isoformat(), jump=MACRO_JUMP[m["kind"]] * beta, scope="宏观"))
-    e = EARNINGS.get(ticker)
+    e = earnings(ticker)
     if e:
         d = _impact_day(e["date"], e["time"])
         if today <= d <= end:
             out.append({"date": e["date"], "impact": d.isoformat(), "kind": "EARN", "title": f"{ticker} 财报（{'盘后' if e['time'] == 'after' else '盘前'}）",
                         "confirmed": e["confirmed"], "jump": e["jump"], "ticker": ticker, "scope": "个股"})
     for comp, j in INDEX_EARNINGS.get(ticker, []):
-        ce = EARNINGS.get(comp)
+        ce = earnings(comp)
         if not ce: continue
         d = _impact_day(ce["date"], ce["time"])
         if today <= d <= end:

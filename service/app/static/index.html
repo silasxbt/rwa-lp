@@ -194,6 +194,21 @@
   .pos { color:var(--in); } .neg { color:var(--out); } .bad { color:var(--risk); } .dim { color:var(--dim); }
   .note { color:var(--dim); font-size:11px; margin-top:6px; max-width:78ch; }
   .err { color:var(--risk); }
+  .lab-tabs { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .lab-ctl { display:inline-flex; align-items:center; gap:6px; color:var(--dim); font-size:12px; }
+  .lab-ctl input { width:74px; padding:3px 6px; }
+  .lab-ctl input.wide { width:200px; }
+  .mini { font:500 12px var(--sans); color:var(--ice); background:transparent; border:1px solid var(--ice); border-radius:3px; padding:2px 9px; cursor:pointer; }
+  .mini:active { transform:scale(.96); }
+  .picks { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
+  .pick { border:1px solid var(--rule); border-radius:4px; background:var(--deck); padding:10px 12px; }
+  .pick h3 { margin:0 0 4px; font-size:13px; font-weight:600; display:flex; justify-content:space-between; align-items:center; }
+  .pick .rng { font:500 15px var(--mono); }
+  .pick p { margin:4px 0 0; color:var(--dim); font-size:11px; }
+  .wf td:nth-child(2) { font-weight:500; }
+  .wf tr.total td { border-top:1px solid var(--rule2); color:var(--text); }
+  .verdict { font:600 15px var(--sans); margin-right:8px; }
+  @media (max-width:900px) { .picks { grid-template-columns:1fr; } }
   .empty { color:var(--dim); padding:18px; border:1px dashed var(--rule2); border-radius:4px; }
   .bar { display:inline-block; height:5px; background:var(--ice); border-radius:1px; vertical-align:middle; margin-left:6px; opacity:.7; }
 
@@ -283,6 +298,18 @@
 
   <main>
     <div id="out"><p class="empty">选一个股票池子或粘贴池子地址，然后点「分析」。</p></div>
+
+    <section id="labsec">
+      <h2>工具台 <small id="labmeta">用当前池子、区间和本金计算</small></h2>
+      <div class="lab-tabs"><div class="seg" role="tablist" id="labtabs">
+        <button type="button" role="tab" data-t="research" aria-selected="true">投研审计</button>
+        <button type="button" role="tab" data-t="suggest" aria-selected="false">选区间</button>
+        <button type="button" role="tab" data-t="apr" aria-selected="false">年化测算</button>
+        <button type="button" role="tab" data-t="adv" aria-selected="false">高阶策略</button>
+        <button type="button" role="tab" data-t="track" aria-selected="false">池子追踪</button>
+      </div><span id="labctl"></span></div>
+      <div id="lab" class="empty">选一个池子后点上面的标签。</div>
+    </section>
 
     <section id="btsec" hidden>
       <h2>区间与调仓回测 <small id="btmeta"></small></h2>
@@ -494,6 +521,7 @@ async function check() {
     drawWin();
     siblings(address, seq);
     position(address, seq);
+    lab();
   } catch (err) {
     if (seq !== checkSeq) return;
     $("out").innerHTML = `<p class="err enter">${err.message}</p>`;
@@ -668,6 +696,165 @@ async function backtest() {
 async function block() {
   try { $("block").textContent = "#" + (await api("/api/head")).block.toLocaleString("en-US"); } catch {}
 }
+
+/* ---------- 工具台 ---------- */
+let labTab = localStorage.getItem("rwalp.lab") || "research", labSeq = 0;
+const LAB_CTL = {
+  suggest: `<label class="lab-ctl">持有天数 <input id="l-h" type="number" value="7" min="1" max="30"></label>`,
+  apr: `<label class="lab-ctl">调仓平移 <input id="l-s" type="number" value="0.5" step="0.1" min="0.1" max="0.9"></label>`,
+  adv: `<label class="lab-ctl">分层 <input id="l-t" class="wide" type="text" value="50:-2:2,30:-5:5,20:-12:12" spellcheck="false"></label>
+        <label class="lab-ctl">期限天 <input id="l-d" type="number" value="7" min="1" max="60"></label>`,
+};
+function labArgs() {
+  return {address: $("pool").value.trim(), lo: $("lo").value, hi: $("hi").value, capital: $("cap").value || 1000};
+}
+function ok3(v) { return v === true ? "d-ok" : v === false ? "d-bad" : "d-info"; }
+const pctS = (v, d = 1) => v == null ? "—" : signed(v, x => pct(x, d));
+const big = v => v == null ? "—" : v >= 1e12 ? "$" + (v / 1e12).toFixed(2) + "T" : v >= 1e9 ? "$" + (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? "$" + (v / 1e6).toFixed(1) + "M" : usd(v, 0);
+
+function researchHTML(r) {
+  const f = r.fundamentals, a = r.audit, c = r.chain;
+  const grp = cats => cats.map(cat => { const xs = r.items.filter(x => x.cat === cat); if (!xs.length) return "";
+    return `<div class="grp-row"><span>${cat}</span><ul>${xs.map(x => `<li><span class="dot ${ok3(x.ok)}"></span>${x.text}</li>`).join("")}</ul></div>`; }).join("");
+  const fstats = f ? `<dl class="stats">
+      <div><dt>${f.ticker} ${f.etf ? "ETF" : ""}</dt><dd>${usd(f.price)}</dd></div>
+      <div><dt>${f.etf ? "资产规模" : "市值"}</dt><dd>${big(f.market_cap)}</dd></div>
+      <div><dt>市盈率 / 预期</dt><dd>${f.pe ? f.pe.toFixed(1) : "—"} <span class="dim">/ ${f.fpe ? f.fpe.toFixed(1) : "—"}</span></dd></div>
+      <div><dt>${f.etf ? "今年以来" : "营收同比"}</dt><dd>${f.etf ? pctS(f.ytd) : pctS(f.rev_growth)}</dd></div>
+      <div><dt>分析师目标</dt><dd>${f.target ? usd(f.target, 0) + ` <span class="dim">${pctS(f.upside, 0)}</span>` : "—"}</dd></div></dl>` : "";
+  const hold = f && f.holdings && f.holdings.length ? `<p class="note">前几大持仓：${f.holdings.map(h => `${h.symbol} ${pct(h.w || 0, 1)}`).join("、")}</p>` : "";
+  const fn = a.functions.length ? `<p class="note">逻辑合约写函数：<code>${a.functions.join("</code> <code>")}</code>${a.implementation ? `，逻辑合约 <a href="https://bscscan.com/address/${a.implementation}#code" target="_blank" rel="noopener">${short(a.implementation)}</a>` : ""}${a.upgrader ? `，升级权限 <a href="https://bscscan.com/address/${a.upgrader.address}" target="_blank" rel="noopener">${short(a.upgrader.address)}</a>` : ""}</p>` : "";
+  return `<div class="enter"><p><span class="verdict ${r.bad ? (r.bad > 1 ? "bad" : "neg") : "pos"}">${r.verdict}</span>
+      <span class="dim">综合 ${r.score}/100 · ${r.bad} 项危险 · ${r.warn} 项需留意</span></p>
+    ${fstats}${hold}
+    <div class="risks open">${grp(["基本面", "合约", "权限", "发行方", "持币", "链上"])}</div>${fn}
+    <p class="note">基本面来自 Yahoo Finance；合约审计读链上代理槽位、BscScan 验证源码的 ABI，把写函数按权限归类，再查每个权限地址是单签、多签还是合约；持币分布来自 GeckoTerminal。bStocks 所有代币共用一个发行方，升级权限在单签钱包是这类资产的主要风险，按「发行方年化出事概率」控制仓位。</p></div>`;
+}
+
+function suggestHTML(s) {
+  const card = k => `<div class="pick"><h3>${k.profile}<button type="button" class="mini" data-lo="${k.lo}" data-hi="${k.hi}">用这个区间</button></h3>
+    <div class="rng">${px(k.lo)} – ${px(k.hi)}</div><div class="dim num">−${k.down}% / +${k.up}%</div>
+    <p>${s.horizon} 天出界 ${pct(k.p_exit, 0)} · 历史在区间 ${pct(k.hist_in, 0)} · 手续费年化 ${pct(k.fee_apr, 0)}</p>
+    <p>净年化：模型 ${pctS(k.model_apr, 0)} · 历史 ${pctS(k.hist_apr, 0)}</p><p>${k.why}</p></div>`;
+  const rows = s.rows.map(r => `<tr><td>−${r.down}% / +${r.up}%</td><td>${px(r.lo)} – ${px(r.hi)}</td>
+    <td class="sep ${r.p_exit >= .5 ? "bad" : r.p_exit >= .25 ? "neg" : ""}">${pct(r.p_exit, 0)}</td><td>${r.days_in.toFixed(1)}</td>
+    <td>${usd(r.fee)}</td><td class="neg">−${usd(r.lvr)}</td><td class="neg">−${usd(r.rebal)}</td><td class="${tone(r.model_net)}">${signed(r.model_net, usd)}</td>
+    <td class="sep">${pct(r.hist_in, 0)}</td><td class="${tone(r.hist_net)}">${signed(r.hist_net, usd)}</td><td class="${tone(r.hist_worst)}">${signed(r.hist_worst, usd)}</td>
+    <td class="sep ${tone(r.apr)}">${pctS(r.apr, 0)}</td>
+    <td><button type="button" class="mini" data-lo="${r.lo}" data-hi="${r.hi}">用</button></td></tr>`).join("");
+  const bands = s.bands.map(b => `${b.k}σ：${px(b.lo)} – ${px(b.hi)}（±${b.down.toFixed(1)}%，${pct(b.p_inside, 0)} 概率到期仍在内）`).join("；");
+  return `<div class="enter"><div class="picks">${s.picks.map(card).join("")}</div>
+    ${s.skew ? `<p class="note neg">${s.skew}</p>` : ""}
+    <div class="scroll"><table><tr><th></th><th></th><th class="grp" colspan="6">前瞻模型（${s.horizon} 天，含事件）</th><th class="grp" colspan="3">历史滚动 ${s.horizon} 天</th><th class="grp" colspan="2"></th></tr>
+      <tr><th>区间</th><th>价格</th><th class="sep">出界概率</th><th>在区间天数</th><th>手续费</th><th>无常损失</th><th>调仓</th><th>净收益</th>
+      <th class="sep">在区间</th><th>平均净收益</th><th>最差窗口</th><th class="sep">保守年化</th><th></th></tr>${rows}</table></div>
+    <p class="note">波动参考带（未来 ${s.horizon} 天总波动 ±${pct(s.vol_h, 1)}${s.events.length ? "，含" + s.events.join("、") : ""}）：${bands}。</p>
+    <p class="note">网格扫描上下沿 1%–15%，每个区间算两遍：前瞻模型 = 当前份额 × 7 日成交 × 预期在区间天数 − LVR 无常损失 − 出界概率 × 一次调仓成本；历史 = 用约 40 天小时线滚动开仓 ${s.horizon} 天的手续费 + 相对持币的损益。排序和「保守年化」取两者较差的那个。本金 ${usd(s.capital, 0)}。</p></div>`;
+}
+
+function aprHTML(a) {
+  const st = a.steps.map((x, n) => `<tr class="${x[0].startsWith("=") ? "total" : ""}"><td>${x[0]}</td><td class="${n && n < 4 ? "neg" : tone(x[1])}">${n && n < 4 ? signed(x[1], v => pct(v, 1)) : pct(x[1], 1)}</td><td class="dim" style="text-align:left;font-family:var(--sans)">${x[2]}</td></tr>`).join("");
+  const w = Object.entries(a.windows).map(([k, r]) => `<tr><td>${k}</td><td>${pct(r.gross, 0)}</td><td class="dim">${pct(r.pool, 0)}</td><td>${pct(r.time_weighted, 0)}</td>
+    <td class="${tone(r.net)}">${pctS(r.net, 0)}</td><td class="${tone(r.apy)}">${pctS(r.apy, 0)}</td><td class="${tone(r.risk_adj)}">${pctS(r.risk_adj, 0)}</td></tr>`).join("");
+  return `<div class="enter"><dl class="stats">
+      <div><dt>LVR 无常损失年化</dt><dd class="neg">${pct(a.lvr_apr, 1)}</dd></div>
+      <div><dt>调仓损失年化</dt><dd class="neg">${pct(a.rebalance_apr, 1)}</dd></div>
+      <div><dt>平均调仓间隔</dt><dd>${a.days_between ? a.days_between.toFixed(0) + " 天" : "—"}</dd></div>
+      <div><dt>单次调仓回本</dt><dd>${a.payback_days ? a.payback_days.toFixed(1) + " 天" : "—"}</dd></div>
+      <div><dt title="手续费刚好覆盖无常损失时的日波动">盈亏平衡日波动</dt><dd>${a.breakeven_sigma ? pct(a.breakeven_sigma, 2) : "—"} <span class="dim">现 ${pct(a.sigma_eff, 2)}</span></dd></div></dl>
+    <div class="scroll"><table class="wf"><tr><th>7 日口径逐项</th><th>年化</th><th style="text-align:left">说明</th></tr>${st}</table></div>
+    <div class="scroll" style="margin-top:10px"><table><tr><th>成交口径</th><th>毛手续费</th><th>全池平均</th><th>× 在区间</th><th>净年化</th><th>周复投</th><th>扣发行方风险</th></tr>${w}</table></div>
+    <p class="note">LVR = σ²/4 × √P/(2√P − √a − P/√b)，是集中流动性相对「同样仓位随时再平衡」的期望损失，全区间时等于 σ²/8，区间越窄放大越多（当前 ${a.lvr_k.toFixed(1)} 倍）。调仓次数按布朗运动出界期望时间 shift·(1−shift)·w²/σ² 估算，σ² 用未来 30 天含事件的平均日方差。净年化不含股价方向收益。</p></div>`;
+}
+
+function advHTML(l, o, c) {
+  let h = "";
+  if (l) {
+    const t = l.tiers.map(x => `<tr><td>${pct(x.weight, 0)}</td><td>${x.down}% / +${x.up}%</td><td>${px(x.lo)} – ${px(x.hi)}</td><td>${usd(x.capital, 0)}</td>
+      <td class="sep">${pct(x.p_exit7, 0)}</td><td>${usd(x.fee_day_now)}</td><td class="sep">${x.rebalances}</td><td>${pct(x.in_range, 0)}</td><td>${pct(x.fee_apr, 0)}</td><td class="bad">−${pct(x.cost_apr, 1)}</td><td class="${tone(x.pnl_apr)}">${pctS(x.pnl_apr, 0)}</td><td>${pct(x.mdd, 1)}</td></tr>`).join("");
+    const sg = l.singles.map(x => `<tr><td>全仓 ${x.down}% / +${x.up}%</td><td>${pct(x.in_range, 0)}</td><td>${x.rebalances}</td><td>${pct(x.fee_apr, 0)}</td><td class="bad">−${pct(x.cost_apr, 1)}</td><td class="${tone(x.pnl_apr)}">${pctS(x.pnl_apr, 0)}</td><td>${pct(x.mdd, 1)}</td></tr>`).join("");
+    const cb = l.combo;
+    h += `<h2>分层 LP</h2><div class="scroll"><table><tr><th>权重</th><th>区间</th><th>价格</th><th>本金</th><th class="sep">7 天出界</th><th>现在手续费/天</th><th class="sep">历史调仓</th><th>在区间</th><th>手续费年化</th><th>调仓成本</th><th>总年化</th><th>最大回撤</th></tr>${t}
+      <tr class="total"><td colspan="5">合计</td><td>${usd(cb.fee_day_now)}</td><td class="sep"></td><td>${pct(cb.in_range, 0)}</td><td>${pct(cb.fee_apr, 0)}</td><td class="bad">−${pct(cb.cost_apr, 1)}</td><td class="${tone(cb.pnl_apr)}">${pctS(cb.pnl_apr, 0)}</td><td></td></tr></table></div>
+      <div class="scroll" style="margin-top:8px"><table><tr><th>对照：同样本金只做一层</th><th>在区间</th><th>调仓</th><th>手续费年化</th><th>调仓成本</th><th>总年化</th><th>最大回撤</th></tr>${sg}</table></div>
+      <p class="note">分层的意义：窄层赚手续费，宽层在大波动时仍留在区间里，合计的在区间时间更平滑、调仓频率更低。历史年化含股价方向收益，约 40 天样本，早期成交量偏高，绝对值偏乐观，主要看层与层之间的相对差别。</p>`;
+  }
+  if (o) {
+    h += `<h2 style="margin-top:18px">期权保护 <small>${o.ticker}，${o.source}${o.expiry ? "，到期 " + o.expiry : ""}（${o.days.toFixed(0)} 天）</small></h2>
+      <dl class="stats">
+        <div><dt>跌破下沿后持股</dt><dd>${o.shares_max.toFixed(3)} 股 <span class="dim">${o.contracts.toFixed(3)} 张</span></dd></div>
+        <div><dt>保护性看跌 K=${o.put.strike}</dt><dd class="neg">${usd(o.cost_put)} <span class="dim">${pct(o.cost_put_apr, 0)}/年</span></dd></div>
+        <div><dt>看跌价差 ${o.put.strike}/${o.put2.strike}</dt><dd class="neg">${usd(o.cost_spread)} <span class="dim">${pct(o.cost_spread_apr, 0)}/年</span></dd></div>
+        <div><dt>同期手续费</dt><dd class="pos">${usd(o.fee_period)} <span class="dim">${pct(o.fee_apr, 0)}/年</span></dd></div>
+        <div><dt>卖出同行权价看跌</dt><dd>${usd(o.sell_put)} <span class="dim">${pct(o.sell_put_apr, 0)}/年</span></dd></div></dl>
+      <dl class="stats" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+        <div><dt>期权隐含波动（平值）</dt><dd>${o.atm_iv ? pct(o.atm_iv, 1) : "—"}</dd></div>
+        <div><dt>链上实际波动（年化）</dt><dd>${pct(o.realized_vol, 1)}</dd></div>
+        <div><dt title="手续费刚好覆盖 LVR 时的年化波动：期权隐含波动高于它，说明市场给的波动价格比你收的手续费贵">手续费隐含波动</dt><dd class="${o.fee_implied_vol && o.atm_iv ? (o.fee_implied_vol > o.atm_iv ? "pos" : "neg") : ""}">${o.fee_implied_vol ? pct(o.fee_implied_vol, 1) : "—"}</dd></div></dl>
+      <p class="note">下沿 ${px(o.lo)} 折算 ${o.ticker} ${usd(o.K_lo)}。做 LP 等于卖波动率：手续费隐含波动 ${o.fee_implied_vol && o.atm_iv ? (o.fee_implied_vol > o.atm_iv ? "高于期权隐含波动，手续费给得比期权市场贵，LP 划算" : "低于期权隐含波动，同样的风险在期权市场卖能收更多，LP 偏亏") : "—"}。
+      美股期权 1 张 = 100 股，按比例的成本只是参考；这个本金下要买满 1 张，LP 本金需要约 ${o.min_capital_1 ? usd(o.min_capital_1, 0) : "—"}。${o.bnb_note ? "股票/BNB 池还暴露在 BNB 价格上，期权只保护股票这一腿。" : ""}</p>`;
+  }
+  if (c) {
+    const head = c.names.map(n => `<th>${n}</th>`).join("");
+    const rows = c.rows.map(r => `<tr><td>${pctS(r.move, 0)}</td><td>${px(r.price)}</td>${c.names.map(n => `<td class="${tone(r.pnl[n])}">${signed(r.pnl[n], usd)}</td>`).join("")}</tr>`).join("");
+    const st = k => c.names.map(n => `<td class="${tone(c.stats[n][k])}">${k === "ev_apr" ? pctS(c.stats[n][k], 0) : signed(c.stats[n][k], usd)}</td>`).join("");
+    h += `<h2 style="margin-top:18px">做空对比 <small>${c.days} 天后的情景盈亏，本金 ${usd(c.capital, 0)}，LP 初始 delta ${pct(c.delta, 0)}，永续资金费 ${pct(c.funding, 0)}/年</small></h2>
+      <div class="scroll"><table><tr><th>到期涨跌</th><th>价格</th>${head}</tr>${rows}
+        <tr class="total"><td colspan="2">概率加权期望</td>${st("ev")}</tr><tr><td colspan="2">最差 5%</td>${st("var5")}</tr><tr><td colspan="2">期望年化</td>${st("ev_apr")}</tr></table></div>
+      <p class="note">情景按事件钟的总波动 ±${pct(c.sd, 1)} 做正态加权。纯 LP 的手续费按 7 日成交估算，出界的情景只算出界前那段时间；LP + 永续空是开仓时做空等量 delta 不再调整（动态对冲见回测里的 Delta 对冲）；LP + 看跌期权用上面的保护性看跌按比例计成本${c.put_used ? "" : "（本次没取到期权数据，未列出）"}；纯做空用全部本金 1 倍做空。</p>`;
+  }
+  return `<div class="enter">${h || '<p class="dim">没有数据</p>'}</div>`;
+}
+
+function trackHTML(t) {
+  const ago = s => { const m = (Date.now() / 1000 - s) / 60; return m < 60 ? m.toFixed(0) + " 分钟前" : m < 1440 ? (m / 60).toFixed(1) + " 小时前" : (m / 1440).toFixed(0) + " 天前"; };
+  const rows = t.pools.map(r => `<tr data-p="${r.pool}"><td>${r.name}</td><td>${usd(r.tvl, 0)}</td><td class="${r.tvl_drop >= t.rules.tvl_drop ? "bad" : r.tvl_drop > .1 ? "neg" : "dim"}">${r.tvl_drop > .001 ? "−" + pct(r.tvl_drop, 0) : "—"}</td>
+    <td>${usd(r.vol1h, 0)}</td><td class="${r.spike >= t.rules.vol_spike ? "neg" : ""}">${r.spike.toFixed(1)}×</td><td class="${Math.abs(r.move1h) >= t.rules.move_1h ? "neg" : tone(r.move1h)}">${pctS(r.move1h, 1)}</td>
+    <td class="${r.premium != null && Math.abs(r.premium) >= (r.state === "盘中" ? t.rules.dev_open : t.rules.dev_closed) ? "bad" : ""}">${r.premium == null ? "—" : pctS(r.premium, 2)}</td><td class="dim">${r.state || "—"}</td>
+    <td style="text-align:left;font-family:var(--sans)" class="${r.flags.length ? "neg" : "dim"}">${r.flags.join("；") || "正常"}</td></tr>`).join("");
+  const log = t.log.map(x => `<tr><td>${ago(x.t)}</td><td>${x.name}</td><td style="text-align:left;font-family:var(--sans)">${x.text}</td></tr>`).join("");
+  return `<div class="enter"><div class="scroll"><table class="bd"><tr><th>池子</th><th>TVL</th><th>较 6h 高点</th><th>1h 成交</th><th>放量倍数</th><th>1h 涨跌</th><th>链上溢价</th><th>美股</th><th style="text-align:left">状态</th></tr>${rows}</table></div>
+    <h2 style="margin-top:14px">最近预警</h2>${log ? `<div class="scroll"><table><tr><th>时间</th><th>池子</th><th style="text-align:left">内容</th></tr>${log}</table></div>` : '<p class="dim">最近没有池子异动。</p>'}
+    <p class="note">每 5 分钟检查一次：TVL 比 6 小时内高点低 ${pct(t.rules.tvl_drop, 0)}（大额撤流动性）、盘中链上价偏离真实股价 ${pct(t.rules.dev_open, 0)}（休市 ${pct(t.rules.dev_closed, 0)}）、1 小时成交超过 24h 均值 ${t.rules.vol_spike} 倍、1 小时涨跌 ${pct(t.rules.move_1h, 0)}。触发后推送给订阅了该池子的 Telegram（/watch），TVL 腰斩广播给所有人；同类提醒 3 小时内不重复。Telegram 发 /alerts 查看最近记录。</p></div>`;
+}
+
+async function lab(force) {
+  const seq = ++labSeq, box = $("lab"), A = labArgs();
+  document.querySelectorAll("#labtabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.t === labTab));
+  if (!force || $("labctl").dataset.t !== labTab) { $("labctl").innerHTML = (LAB_CTL[labTab] || "") + ` <button type="button" class="mini" id="labgo">重新计算</button>`; $("labctl").dataset.t = labTab; }
+  if (!A.address) return;
+  const slow = {research: "读取合约、源码和基本面，首次约 10 秒…", suggest: "扫描约 100 个区间，约 5–20 秒…", adv: "回测分层、拉期权链，约 10–30 秒…"}[labTab] || "计算中…";
+  box.className = ""; loading(box, true);
+  if (!box.innerHTML || box.dataset.t !== labTab) box.innerHTML = `<p class="dim">${slow}</p>`;
+  box.dataset.t = labTab;
+  const Q = o => new URLSearchParams(o);
+  try {
+    let html;
+    if (labTab === "research") html = researchHTML(await api("/api/research?" + Q({address: A.address})));
+    else if (labTab === "suggest") html = suggestHTML(await api("/api/suggest?" + Q({address: A.address, capital: A.capital, horizon: $("l-h")?.value || 7, shift: Math.min(+$("shift").value || .5, .9)})));
+    else if (labTab === "apr") html = aprHTML(await api("/api/apr?" + Q({...A, shift: $("l-s")?.value || .5, risk: ($("risk").value || 0) / 100})));
+    else if (labTab === "track") html = trackHTML(await api("/api/tracking?" + Q({pools: [...new Set([...Object.values(POOLS), A.address.toLowerCase()])].join(",")})));
+    else {
+      const d = $("l-d")?.value || 7;
+      const [l, o, c] = await Promise.all([
+        api("/api/ladder?" + Q({address: A.address, capital: A.capital, tiers: $("l-t")?.value || "50:-2:2,30:-5:5,20:-12:12", shift: $("shift").value || .5, market_hours: $("mh").checked})).catch(e => ({err: e.message})),
+        api("/api/options?" + Q({...A, days: Math.max(d, 7)})).catch(e => ({err: e.message})),
+        api("/api/compare?" + Q({...A, days: d})).catch(e => ({err: e.message}))]);
+      html = advHTML(l.err ? null : l, o.err ? null : o, c.err ? null : c) + [l, o, c].filter(x => x.err).map(x => `<p class="err">${x.err}</p>`).join("");
+    }
+    if (seq === labSeq) box.innerHTML = html;
+  } catch (err) { if (seq === labSeq) box.innerHTML = `<p class="err">${err.message}</p>`; }
+  if (seq === labSeq) loading(box, false);
+}
+document.addEventListener("click", e => {
+  const t = e.target.closest("#labtabs button");
+  if (t) { labTab = t.dataset.t; localStorage.setItem("rwalp.lab", labTab); lab(); return; }
+  if (e.target.id === "labgo") return lab(true);
+  const u = e.target.closest("#lab button[data-lo]");
+  if (u) { $("lo").value = pxIn(+u.dataset.lo); $("hi").value = pxIn(+u.dataset.hi); check(); window.scrollTo({top: 0, behavior: "smooth"}); return; }
+  const tr = e.target.closest("#lab tr[data-p]");
+  if (tr) { $("pool").value = tr.dataset.p; $("lo").value = $("hi").value = ""; syncTickers(); check(); window.scrollTo({top: 0, behavior: "smooth"}); }
+});
 
 const bot = "{{BOT}}";
 $("tg").innerHTML = bot

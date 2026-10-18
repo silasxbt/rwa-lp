@@ -13,9 +13,10 @@ HELP = """rwalp 机器人：bStocks 代币化美股 LP 风控
 /list  查看我的订阅
 /unwatch <编号>  取消订阅
 /check <池子地址> [下沿 上沿]  池子体检 + 手续费估算
+/alerts  最近的池子异动（撤流动性、价格偏离、异常放量、急涨急跌）
 /stop  停止接收所有提醒
 
-订阅后会收到：出区间/近区间提醒、区间评级变化（安全/警惕/危险）、bStocks 治理告警（升级、暂停、黑名单、大额增发）。
+订阅后会收到：出区间/近区间提醒、区间评级变化（安全/警惕/危险）、所订阅池子的异动、bStocks 治理告警（升级、暂停、黑名单、异常增发）。
 网页版：https://rwalp.silasxbt.com"""
 
 def send(chat_id, text):
@@ -42,6 +43,11 @@ def handle(update):
         ws = store.watches(chat)
         send(chat, "\n".join(f"{w['id'][:6]}  {w['name']}  ${w['lo']:,.2f} – ${w['hi']:,.2f}  {w.get('zone', '')}" for w in ws)
              or "还没有订阅。用 /watch <池子地址> <下沿> <上沿> 添加。")
+    elif cmd == "/alerts":
+        import time
+        items = (store.get_state("pool_log") or {}).get("items", [])[:10]
+        send(chat, "\n\n".join(f"{time.strftime('%m-%d %H:%M', time.gmtime(x['t'] + 8 * 3600))}  {x['name']}\n{x['text']}" for x in items)
+             or "最近没有池子异动。")
     elif cmd == "/unwatch" and len(args) == 2:
         hit = [w for w in store.watches(chat) if w["id"].startswith(args[1])]
         ok = len(hit) == 1 and store.remove_watch(chat, hit[0]["id"])

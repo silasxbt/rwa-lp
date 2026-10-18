@@ -193,7 +193,76 @@ def tick():
                 sent += 1
     report["zone_alerts"] = sent
     report["rating_alerts"] = rating_alerts(ws)
+    if int(time.time() // 60) % 5 == 0:   # 池子异动每 5 分钟查一次（行情数据本身 15 分钟刷新）
+        try: report["pool_alerts"] = pool_alerts(ws)
+        except Exception as e: report["pool_alerts"] = f"error: {e}"
     return report
+
+# ---------- 池子异动追踪 ----------
+TVL_DROP = 0.30          # TVL 比过去 6 小时最高值低 30%：有人大额撤流动性
+TVL_DROP_SEVERE = 0.50   # 低 50% 广播给所有人
+DEVIATION_OPEN = 0.03    # 美股盘中链上价偏离真实股价 3%：套利通道可能出问题
+DEVIATION_CLOSED = 0.06  # 休市时放宽到 6%
+VOL_SPIKE = 8            # 1 小时成交是 24 小时均值的 8 倍，且超过 2 万美元
+MOVE_1H = 0.04           # 1 小时涨跌 4%
+POOL_COOLDOWN = 3 * 3600
+
+def pool_status(pools, save=True):
+    """每个池子的当前异动指标（网页的「池子追踪」也用这个）。"""
+    from .chain import gt_multi
+    from .analytics import pool_info
+    from .position import fair_price
+    try: snap = store.get_state("pool_snap") or {}
+    except Exception: snap = {}
+    data = gt_multi(pools)
+    now = time.time(); out = []
+    for p in pools:
+        d = data.get(p)
+        if not d: continue
+        a = d["attributes"]
+        tvl = float(a.get("reserve_in_usd") or 0)
+        v1, v24 = float(a["volume_usd"].get("h1") or 0), float(a["volume_usd"].get("h24") or 0)
+        ch1 = float((a.get("price_change_percentage") or {}).get("h1") or 0) / 100
+        hist = [x for x in snap.get(p, []) if now - x["t"] < 6 * 3600]   # Firestore 不支持嵌套数组，存成 {t, v}
+        peak = max([x["v"] for x in hist] + [tvl])
+        r = dict(pool=p, name=a.get("name"), tvl=tvl, tvl_peak6h=peak, tvl_drop=1 - tvl / peak if peak else 0,
+                 vol1h=v1, vol24=v24, spike=v1 / (v24 / 24) if v24 else 0, move1h=ch1, premium=None, state=None)
+        try:
+            i = pool_info(p); f = fair_price(i)
+            if f: r.update(premium=i["price"] / f["fair"] - 1, state=f["state"], name=i["name"])
+        except Exception: pass
+        r["flags"] = []
+        if r["tvl_drop"] >= TVL_DROP: r["flags"].append(("tvl", f"TVL 从 6 小时内高点 ${peak:,.0f} 降到 ${tvl:,.0f}（−{r['tvl_drop']*100:.0f}%），有人大额撤流动性，你的份额和成交深度都会变"))
+        if r["premium"] is not None:
+            lim = DEVIATION_OPEN if r["state"] == "盘中" else DEVIATION_CLOSED
+            if abs(r["premium"]) >= lim: r["flags"].append(("dev", f"链上价相对真实股价{'溢价' if r['premium'] > 0 else '折价'} {abs(r['premium'])*100:.1f}%（{r['state']}），套利没跟上，回归时会扫过你的区间"))
+        if r["spike"] >= VOL_SPIKE and v1 >= 20_000: r["flags"].append(("vol", f"1 小时成交 ${v1:,.0f}，是 24 小时均值的 {r['spike']:.0f} 倍"))
+        if abs(ch1) >= MOVE_1H: r["flags"].append(("move", f"1 小时{'上涨' if ch1 > 0 else '下跌'} {abs(ch1)*100:.1f}%"))
+        snap[p] = (hist + [{"t": now, "v": tvl}])[-80:]
+        out.append(r)
+    if save: store.set_state("pool_snap", snap)
+    return out
+
+def pool_alerts(ws):
+    pools = sorted(set(KNOWN_POOLS.values()) | {w["pool"] for w in ws})
+    rows = pool_status(pools)
+    cool = store.get_state("pool_cool") or {}
+    log = store.get_state("pool_log") or {"items": []}
+    now, sent = time.time(), 0
+    watchers = {}
+    for w in ws: watchers.setdefault(w["pool"], set()).add(w["chat_id"])
+    for r in rows:
+        for kind, text in r["flags"]:
+            key = f"{r['pool']}|{kind}"
+            if now - cool.get(key, 0) < POOL_COOLDOWN: continue
+            cool[key] = now
+            log["items"] = ([{"t": now, "pool": r["pool"], "name": r["name"], "kind": kind, "text": text}] + log["items"])[:50]
+            to = set(watchers.get(r["pool"], ()))
+            if kind == "tvl" and r["tvl_drop"] >= TVL_DROP_SEVERE: to |= set(store.chats())
+            for c in to: telegram.send(c, f"📡 {r['name']} 池子异动\n{text}"); sent += 1
+    store.set_state("pool_cool", {k: v for k, v in cool.items() if now - v < 86400})
+    store.set_state("pool_log", log)
+    return sent
 
 RATING_ICON = {"安全": "🟢", "警惕": "🟠", "危险": "🔴"}
 RATING_COOLDOWN = 1800  # 同一订阅降级/升级提醒的最短间隔（秒）；升到「危险」不受限制
