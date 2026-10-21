@@ -22,6 +22,12 @@ def _pool(address):
 def index():
     return INDEX.replace("{{BOT}}", os.environ.get("TG_BOT_USERNAME", ""))
 
+GUIDE = (pathlib.Path(__file__).parent / "static" / "guide.html").read_text()
+
+@app.get("/guide", response_class=HTMLResponse)
+def guide():
+    return GUIDE.replace("{{BOT}}", os.environ.get("TG_BOT_USERNAME", ""))
+
 FAVICON = (pathlib.Path(__file__).parent / "static" / "favicon.svg").read_bytes()
 
 @app.get("/favicon.svg")

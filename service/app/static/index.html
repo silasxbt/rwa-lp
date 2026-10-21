@@ -22,10 +22,6 @@
   * { box-sizing:border-box; }
   html { background:var(--base); -webkit-tap-highlight-color:transparent; }
   body { margin:0; color:var(--text); font:13px/1.55 var(--sans); -webkit-font-smoothing:antialiased; }
-  body::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
-         background:radial-gradient(ellipse at 70% -10%,transparent 0,var(--base) 70%),
-                    linear-gradient(var(--rule) 1px,transparent 1px) -1px -1px/48px 48px,
-                    linear-gradient(90deg,var(--rule) 1px,transparent 1px) -1px -1px/48px 48px; }
   .num, code, input { font-family:var(--mono); font-variant-numeric:tabular-nums; }
   a { color:var(--ice); text-decoration:none; }
   @media (hover:hover) and (pointer:fine) { a:hover { text-decoration:underline; } }
@@ -194,6 +190,24 @@
   .pos { color:var(--in); } .neg { color:var(--out); } .bad { color:var(--risk); } .dim { color:var(--dim); }
   .note { color:var(--dim); font-size:11px; margin-top:6px; max-width:78ch; }
   .err { color:var(--risk); }
+  .sub { color:var(--dim); font-size:11px; margin:6px 0 0; }
+  .split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; align-items:start; margin-top:12px; }
+  .split .win-bar { margin-top:0; }
+  .split .stats { grid-template-columns:repeat(3,minmax(0,1fr)); gap:1px; background:var(--rule); overflow:hidden; }
+  .split .stats div { border:0; background:var(--deck); }
+  .split .risks { margin:0; }
+  @media (max-width:1100px) { .split { grid-template-columns:1fr; } }
+  .info { position:relative; display:inline-flex; vertical-align:1px; margin-left:6px; }
+  .info > button { width:15px; height:15px; border-radius:50%; border:1px solid var(--rule2); background:transparent; color:var(--dim);
+                   font:italic 600 10px/13px Georgia,serif; padding:0; cursor:pointer; transition:color 150ms ease, border-color 150ms ease; }
+  .info > button[aria-expanded="true"] { color:var(--ice); border-color:var(--ice); }
+  @media (hover:hover) and (pointer:fine) { .info > button:hover { color:var(--text); border-color:var(--dim); } }
+  .info .pop { position:absolute; left:-8px; top:22px; z-index:20; width:min(460px,80vw); padding:10px 12px; border:1px solid var(--rule2); border-radius:4px;
+               background:rgba(12,18,27,.97); box-shadow:0 8px 24px rgba(0,0,0,.45); color:var(--text); font:400 12px/1.6 var(--sans); white-space:normal;
+               transform-origin:top left; animation:pop 160ms var(--ease-out); }
+  .info .pop[hidden] { display:none; }
+  .info .pop p { margin:0; } .info .pop p + p { margin-top:6px; }
+  @keyframes pop { from { opacity:0; transform:scale(.97) translateY(-2px); } }
   .lab-tabs { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
   .lab-ctl { display:inline-flex; align-items:center; gap:6px; color:var(--dim); font-size:12px; }
   .lab-ctl input { width:74px; padding:3px 6px; }
@@ -242,7 +256,7 @@
 <header>
   <span class="mark">rwa<i>lp</i></span>
   <span class="chain"><span class="pulse" aria-hidden="true"></span>BSC <span class="num" id="block">—</span></span>
-  <nav><a id="botlink" href="#bot">Telegram 提醒</a><a href="https://github.com/silasxbt/rwa-lp">源码</a><a href="/api/docs">API</a></nav>
+  <nav><a href="/guide">使用说明</a><a href="https://github.com/silasxbt/rwa-lp">源码</a><a href="/api/docs">API</a></nav>
 </header>
 
 <div class="shell">
@@ -321,10 +335,6 @@
       <div id="board" class="empty">读取中…</div>
     </section>
 
-    <section id="bot">
-      <h2>Telegram 提醒</h2>
-      <div class="bot" id="tg"></div>
-    </section>
 
     <footer><span id="src"></span> 只读链上数据，不连接钱包。数据来自 BSC 公共 RPC 和 GeckoTerminal；手续费估算基于历史成交量与当前流动性，未计入无常损失，不构成投资建议。</footer>
   </main>
@@ -504,7 +514,8 @@ async function check() {
         <div class="rail">${railSVG() || '<p class="dim">深度数据暂不可用</p>'}</div>
       </div><div id="posbox"><div class="posbox"><div class="grade"><span class="dim" style="font-size:11px">区间位置评级</span><div class="lv dim">…</div></div></div></div></div>
       <div class="legend"><span><b style="background:var(--rule2)"></b>其他 LP 的活跃流动性</span><span><b style="background:var(--ice)"></b>落在你区间内的部分</span><span><b style="background:var(--in)"></b>当前价</span></div>
-      <div class="win-bar"><span class="dim">收益口径</span><div class="seg" role="tablist" id="win">${WIN.map(k =>
+      <div class="split"><div>
+      <div class="win-bar" data-info-anchor><span class="dim">收益口径</span><div class="seg" role="tablist" id="win">${WIN.map(k =>
         `<button type="button" role="tab" data-w="${k}" aria-selected="${k === winKey}">${k}</button>`).join("")}</div>
         <span class="dim" id="winnote"></span></div>
       <dl class="stats">
@@ -514,8 +525,8 @@ async function check() {
         <div><dt>手续费年化 <span class="dim">· 全池平均</span></dt><dd id="w-apr">—</dd></div>
         <div><dt title="手续费年化扣掉发行方出事的期望损失：(1−p)·(1+年化) − 1">风险调整后年化</dt><dd id="w-adj">—</dd></div>
       </dl>
-      ${risksHTML([...p.flags, ...(gv || [])])}
       <p class="note">手续费 = 所选口径的日均成交 × LP 实得费率 × 你在当前价位的流动性占比；别人增减流动性会改变份额。</p>
+      </div>${risksHTML([...p.flags, ...(gv || [])])}</div>
       <section style="margin-top:18px"><h2>事件钟 <small id="ckmeta"></small></h2><div id="clock" class="dim">计算中…</div></section>
       <section style="margin-top:18px"><h2>调仓成本估算 <small id="rbmeta"></small></h2><div id="rebal" class="dim">计算中…</div></section></div>`;
     drawWin();
@@ -722,8 +733,8 @@ function researchHTML(r) {
       <div><dt>市盈率 / 预期</dt><dd>${f.pe ? f.pe.toFixed(1) : "—"} <span class="dim">/ ${f.fpe ? f.fpe.toFixed(1) : "—"}</span></dd></div>
       <div><dt>${f.etf ? "今年以来" : "营收同比"}</dt><dd>${f.etf ? pctS(f.ytd) : pctS(f.rev_growth)}</dd></div>
       <div><dt>分析师目标</dt><dd>${f.target ? usd(f.target, 0) + ` <span class="dim">${pctS(f.upside, 0)}</span>` : "—"}</dd></div></dl>` : "";
-  const hold = f && f.holdings && f.holdings.length ? `<p class="note">前几大持仓：${f.holdings.map(h => `${h.symbol} ${pct(h.w || 0, 1)}`).join("、")}</p>` : "";
-  const fn = a.functions.length ? `<p class="note">逻辑合约写函数：<code>${a.functions.join("</code> <code>")}</code>${a.implementation ? `，逻辑合约 <a href="https://bscscan.com/address/${a.implementation}#code" target="_blank" rel="noopener">${short(a.implementation)}</a>` : ""}${a.upgrader ? `，升级权限 <a href="https://bscscan.com/address/${a.upgrader.address}" target="_blank" rel="noopener">${short(a.upgrader.address)}</a>` : ""}</p>` : "";
+  const hold = f && f.holdings && f.holdings.length ? `<p class="sub">前几大持仓：${f.holdings.map(h => `${h.symbol} ${pct(h.w || 0, 1)}`).join("、")}</p>` : "";
+  const fn = a.functions.length ? `<p class="sub">逻辑合约写函数：<code>${a.functions.join("</code> <code>")}</code>${a.implementation ? `，逻辑合约 <a href="https://bscscan.com/address/${a.implementation}#code" target="_blank" rel="noopener">${short(a.implementation)}</a>` : ""}${a.upgrader ? `，升级权限 <a href="https://bscscan.com/address/${a.upgrader.address}" target="_blank" rel="noopener">${short(a.upgrader.address)}</a>` : ""}</p>` : "";
   return `<div class="enter"><p><span class="verdict ${r.bad ? (r.bad > 1 ? "bad" : "neg") : "pos"}">${r.verdict}</span>
       <span class="dim">综合 ${r.score}/100 · ${r.bad} 项危险 · ${r.warn} 项需留意</span></p>
     ${fstats}${hold}
@@ -748,7 +759,7 @@ function suggestHTML(s) {
     <div class="scroll"><table><tr><th></th><th></th><th class="grp" colspan="6">前瞻模型（${s.horizon} 天，含事件）</th><th class="grp" colspan="3">历史滚动 ${s.horizon} 天</th><th class="grp" colspan="2"></th></tr>
       <tr><th>区间</th><th>价格</th><th class="sep">出界概率</th><th>在区间天数</th><th>手续费</th><th>无常损失</th><th>调仓</th><th>净收益</th>
       <th class="sep">在区间</th><th>平均净收益</th><th>最差窗口</th><th class="sep">保守年化</th><th></th></tr>${rows}</table></div>
-    <p class="note">波动参考带（未来 ${s.horizon} 天总波动 ±${pct(s.vol_h, 1)}${s.events.length ? "，含" + s.events.join("、") : ""}）：${bands}。</p>
+    <p class="sub">波动参考带（未来 ${s.horizon} 天总波动 ±${pct(s.vol_h, 1)}${s.events.length ? "，含" + s.events.join("、") : ""}）：${bands}。</p>
     <p class="note">网格扫描上下沿 1%–15%，每个区间算两遍：前瞻模型 = 当前份额 × 7 日成交 × 预期在区间天数 − LVR 无常损失 − 出界概率 × 一次调仓成本；历史 = 用约 40 天小时线滚动开仓 ${s.horizon} 天的手续费 + 相对持币的损益。排序和「保守年化」取两者较差的那个。本金 ${usd(s.capital, 0)}。</p></div>`;
 }
 
@@ -856,12 +867,35 @@ document.addEventListener("click", e => {
   if (tr) { $("pool").value = tr.dataset.p; $("lo").value = $("hi").value = ""; syncTickers(); check(); window.scrollTo({top: 0, behavior: "smooth"}); }
 });
 
-const bot = "{{BOT}}";
-$("tg").innerHTML = bot
-  ? `<a href="https://t.me/${bot}" target="_blank" rel="noopener">@${bot}</a>
-     <span>订阅：<code>/watch 池子地址 下沿 上沿</code></span><span>体检：<code>/check 池子地址</code></span>
-     <span class="dim">价格接近或超出区间、区间评级变化、发行方升级、暂停、拉黑、大额增发时推送</span>`
-  : `<span class="dim">机器人尚未配置。</span>`;
+
+/* 说明小字收进标题旁的 i，点击查看 */
+function anchorOf(el) {
+  for (let n = el; n && n !== document.body; n = n.parentElement) {
+    for (let p = n.previousElementSibling; p; p = p.previousElementSibling) {
+      if (p.matches("h1,h2,[data-info-anchor]")) return p;
+    }
+    if (n.parentElement?.matches("section") && n.parentElement.querySelector(":scope > h2")) return n.parentElement.querySelector(":scope > h2");
+  }
+  return null;
+}
+function infoize() {
+  document.querySelectorAll("p.note:not(.neg)").forEach(p => {
+    const a = anchorOf(p); if (!a) return;
+    let box = a.querySelector(":scope > .info");
+    if (!box) {
+      a.insertAdjacentHTML("beforeend", `<span class="info"><button type="button" aria-label="说明" aria-expanded="false">i</button><div class="pop" role="tooltip" hidden></div></span>`);
+      box = a.querySelector(":scope > .info");
+    }
+    const q = document.createElement("p"); q.innerHTML = p.innerHTML; box.querySelector(".pop").appendChild(q); p.remove();
+  });
+}
+new MutationObserver(infoize).observe(document.body, {childList: true, subtree: true});
+document.addEventListener("click", e => {
+  const b = e.target.closest(".info > button");
+  document.querySelectorAll(".info > button[aria-expanded=true]").forEach(x => { if (x !== b && !x.parentElement.contains(e.target)) { x.setAttribute("aria-expanded", false); x.nextElementSibling.hidden = true; } });
+  if (b) { const o = b.getAttribute("aria-expanded") !== "true"; b.setAttribute("aria-expanded", o); b.nextElementSibling.hidden = !o; }
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") document.querySelectorAll(".info > button[aria-expanded=true]").forEach(x => x.click()); });
 $("go").onclick = check; $("bt").onclick = backtest;
 syncTickers(); presets(); check(); block(); board(); source(); setInterval(block, 6000);
 </script>

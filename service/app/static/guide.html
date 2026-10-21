@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用说明 · rwalp</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0c121b">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --base:#0c121b; --deck:#101824; --rule:#1c2735; --rule2:#283648; --text:#d3dde9; --dim:#6a7b91; --ice:#8ec9ff;
+          --sans:"Geist","PingFang SC","Noto Sans SC",system-ui,sans-serif; --mono:"Geist Mono","SF Mono",ui-monospace,monospace; }
+  * { box-sizing:border-box; }
+  html { background:var(--base); }
+  body { margin:0; color:var(--text); font:14px/1.7 var(--sans); -webkit-font-smoothing:antialiased; }
+  a { color:var(--ice); text-decoration:none; }
+  @media (hover:hover) and (pointer:fine) { a:hover { text-decoration:underline; } }
+  header { display:flex; align-items:center; gap:18px; padding:12px 20px; border-bottom:1px solid var(--rule); position:sticky; top:0; background:rgba(12,18,27,.9); backdrop-filter:blur(6px); }
+  .mark { font-weight:600; font-size:15px; letter-spacing:-.02em; color:var(--text); }
+  .mark i { font-style:normal; color:var(--ice); }
+  header nav { margin-left:auto; display:flex; gap:16px; font-size:13px; }
+  main { max-width:760px; margin:0 auto; padding:28px 20px 64px; }
+  h1 { font-size:22px; font-weight:600; letter-spacing:-.02em; margin:0 0 6px; }
+  h2 { font-size:15px; font-weight:600; margin:32px 0 8px; padding-top:16px; border-top:1px solid var(--rule); }
+  p, li { color:#b9c5d3; }
+  .lead { color:var(--dim); margin:0 0 8px; }
+  ol, ul { padding-left:20px; margin:6px 0; }
+  li + li { margin-top:4px; }
+  code { font:13px var(--mono); background:var(--deck); border:1px solid var(--rule); border-radius:3px; padding:1px 5px; color:var(--text); }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin:8px 0; }
+  td { padding:6px 10px; border-bottom:1px solid var(--rule); vertical-align:top; }
+  td:first-child { white-space:nowrap; width:1%; }
+  .bot { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border:1px solid var(--ice); border-radius:4px; margin:6px 0; font-weight:500; }
+  .dim { color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <a class="mark" href="/">rwa<i>lp</i></a>
+  <nav><a href="/">返回工具</a><a href="https://github.com/silasxbt/rwa-lp">源码</a><a href="/api/docs">API</a></nav>
+</header>
+<main>
+  <h1>使用说明</h1>
+  <p class="lead">BSC 上 bStocks 代币化美股（以及任意 V3 池子）的集中流动性做市工具。只读链上数据，不连接钱包。</p>
+
+  <h2>1. 分析一个池子</h2>
+  <ol>
+    <li>左侧点一个股票代码，或粘贴 PancakeSwap V3 / Uniswap V3 池子地址。</li>
+    <li>填上你的区间（下沿、上沿）和本金，留空时默认取当前价 −4% / +6%。股票/BNB 池的区间按 BNB 填。</li>
+    <li>点「分析」。结果里依次是：深度图和你的区间、区间位置评级、收益口径（24h–30d 切换）、风险点、事件钟、调仓成本。</li>
+  </ol>
+  <p>标题旁的 <code>i</code> 点开是这一块的计算方法和口径说明。</p>
+
+  <h2>2. 工具台</h2>
+  <table>
+    <tr><td>投研审计</td><td>标的基本面、代币合约审计（升级权限、增发、拉黑、暂停等权限归属）、持币集中度、链上溢价，给出综合结论。</td></tr>
+    <tr><td>选区间</td><td>扫描约 100 个区间，前瞻模型和历史回测取较差者，给出保守 / 平衡 / 进取三个参考区间，点「用这个区间」直接套用。</td></tr>
+    <tr><td>年化测算</td><td>从毛手续费逐项扣到净年化：在区间时间、无常损失（LVR）、调仓损失、复投、发行方风险。</td></tr>
+    <tr><td>高阶策略</td><td>分层 LP、期权保护（保护性看跌 / 价差）、持币 / LP / LP + 空单 / 纯做空的情景对比。</td></tr>
+    <tr><td>池子追踪</td><td>所有自选池子的 TVL 变化、放量、急涨急跌、链上价偏离，以及最近的预警记录。</td></tr>
+  </table>
+
+  <h2>3. 回测</h2>
+  <ol>
+    <li>区间组合按相对开仓价的百分比填，例如 <code>-3:3,-4:6,-5:7</code>。</li>
+    <li>「出界平移比例」是出界后区间朝出界方向移动多少（按区间宽度）。</li>
+    <li>可以选 Delta 对冲（永续或美股融券），会给出对冲成本和多大本金规模下对冲才划算。</li>
+  </ol>
+
+  <h2>4. Telegram 提醒</h2>
+  <p id="botline" class="dim">机器人尚未配置。</p>
+  <table>
+    <tr><td><code>/watch 池子地址 下沿 上沿</code></td><td>订阅区间提醒（最多 10 个）</td></tr>
+    <tr><td><code>/list</code></td><td>查看我的订阅</td></tr>
+    <tr><td><code>/unwatch 编号</code></td><td>取消订阅</td></tr>
+    <tr><td><code>/check 池子地址 [下沿 上沿]</code></td><td>池子体检和手续费估算</td></tr>
+    <tr><td><code>/alerts</code></td><td>最近的池子异动</td></tr>
+    <tr><td><code>/stop</code></td><td>停止接收所有提醒</td></tr>
+  </table>
+  <p>订阅后会收到：</p>
+  <ul>
+    <li>价格接近（1% 以内）或超出区间、回到区间</li>
+    <li>区间评级变化（安全 / 警惕 / 危险）</li>
+    <li>所订阅池子的异动：TVL 骤降、链上价偏离真实股价、异常放量、1 小时急涨急跌</li>
+    <li>bStocks 治理告警：合约升级、暂停、拉黑或制裁、权限变更、异常增发</li>
+  </ul>
+
+  <h2>5. 注意</h2>
+  <ul>
+    <li>手续费估算基于历史成交量和当前流动性，别人增减流动性会改变你的份额。</li>
+    <li>回测样本只有约 40 天，新池子早期成交偏高，结果偏乐观。</li>
+    <li>监控只告警不撤池，收到提醒需要自己操作。</li>
+    <li>不构成投资建议。</li>
+  </ul>
+</main>
+<script>
+const bot = "{{BOT}}";
+if (bot && !bot.startsWith("{{")) document.getElementById("botline").innerHTML =
+  `<a class="bot" href="https://t.me/${bot}" target="_blank" rel="noopener">打开 @${bot}</a>`;
+</script>
+</body>
+</html>
